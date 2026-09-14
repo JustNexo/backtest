@@ -10,10 +10,12 @@ import {
   LineStyle,
   IPriceLine,
   Time,
+  createSeriesMarkers,
 } from 'lightweight-charts';
 import { useChart } from '../../context/ChartContext';
 import { formatCurrency, formatPercent, formatPrice } from '../../utils/formatters';
 import { Scissors, GripVertical, X, ArrowDownRight, ArrowUpRight } from 'lucide-react';
+import { DrawingLayer } from './DrawingLayer';
 
 interface DragState {
   type: 'pos_sl' | 'pos_tp' | 'limit_price' | 'limit_sl' | 'limit_tp';
@@ -34,6 +36,9 @@ export const TradingViewChart: React.FC = () => {
   // Limit order lines map: orderId -> [limitLine, slLine, tpLine]
   const limitLinesMapRef = useRef<Map<string, IPriceLine[]>>(new Map());
 
+  // Fractals markers reference
+  const fractalsMarkersRef = useRef<any>(null);
+
   // Render tick to keep overlay handles locked to coordinates on chart pan/zoom
   const [, setTick] = useState(0);
   const forceUpdate = useCallback(() => setTick((t) => t + 1), []);
@@ -50,6 +55,7 @@ export const TradingViewChart: React.FC = () => {
     activePosition,
     limitOrders,
     balance,
+    showFractals,
     updateActivePositionSL,
     updateActivePositionTP,
     updateLimitOrderPrice,
@@ -246,6 +252,61 @@ export const TradingViewChart: React.FC = () => {
     volumeSeriesRef.current.setData(formattedVolume);
     forceUpdate();
   }, [visibleCandles, candleColors.volumeUpColor, candleColors.volumeDownColor]);
+
+  // Update Williams Fractals Indicator Markers
+  useEffect(() => {
+    if (!candleSeriesRef.current) return;
+
+    if (!showFractals) {
+      if (fractalsMarkersRef.current) {
+        fractalsMarkersRef.current.setMarkers([]);
+      }
+      return;
+    }
+
+    const markers: any[] = [];
+    const len = visibleCandles.length;
+    for (let i = 2; i < len - 2; i++) {
+      const c = visibleCandles[i];
+      // High Fractal (Peak)
+      if (
+        c.high > visibleCandles[i - 2].high &&
+        c.high > visibleCandles[i - 1].high &&
+        c.high > visibleCandles[i + 1].high &&
+        c.high > visibleCandles[i + 2].high
+      ) {
+        markers.push({
+          time: c.time as Time,
+          position: 'aboveBar',
+          color: '#089981',
+          shape: 'arrowDown',
+          text: '▲',
+        });
+      }
+
+      // Low Fractal (Trough)
+      if (
+        c.low < visibleCandles[i - 2].low &&
+        c.low < visibleCandles[i - 1].low &&
+        c.low < visibleCandles[i + 1].low &&
+        c.low < visibleCandles[i + 2].low
+      ) {
+        markers.push({
+          time: c.time as Time,
+          position: 'belowBar',
+          color: '#f23645',
+          shape: 'arrowUp',
+          text: '▼',
+        });
+      }
+    }
+
+    if (!fractalsMarkersRef.current) {
+      fractalsMarkersRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
+    } else {
+      fractalsMarkersRef.current.setMarkers(markers);
+    }
+  }, [showFractals, visibleCandles]);
 
   // Update Active Position Price Lines
   useEffect(() => {
@@ -595,6 +656,13 @@ export const TradingViewChart: React.FC = () => {
             );
           })}
       </div>
+
+      {/* Interactive Drawing Layer (Rectangles, Lines, Levels) */}
+      <DrawingLayer
+        chart={chartRef.current}
+        candleSeries={candleSeriesRef.current}
+        containerRef={containerRef}
+      />
     </div>
   );
 };

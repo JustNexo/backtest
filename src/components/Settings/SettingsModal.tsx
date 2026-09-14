@@ -14,7 +14,7 @@ import {
 import { useChart } from '../../context/ChartContext';
 import { COLOR_PALETTE_PRESETS } from '../../services/storage';
 import { PROP_FIRM_PRESETS } from '../../services/tradeEngine';
-import { PropFirmFeeSettings } from '../../types/chart';
+import { ColorPickerInput } from './ColorPickerInput';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -45,7 +45,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#2a2e39] bg-[#131722]/50">
           <div className="flex items-center gap-2.5">
             <Sliders className="w-5 h-5 text-tv-blue" />
-            <h2 className="text-base font-semibold text-white">Настройки графика и симуляции</h2>
+            <h2 className="text-base font-semibold text-white">Настройки графика и цветов</h2>
           </div>
           <button
             onClick={onClose}
@@ -66,7 +66,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             }`}
           >
             <Palette className="w-4 h-4" />
-            <span>Свечи (Цвета как в TradingView)</span>
+            <span>Свечи (HEX / RGB)</span>
           </button>
           <button
             onClick={() => setActiveTab('prop_firm')}
@@ -88,7 +88,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             }`}
           >
             <Moon className="w-4 h-4" />
-            <span>Тема и Сетка</span>
+            <span>Фон и Сетка (HEX / RGB)</span>
           </button>
         </div>
 
@@ -139,27 +139,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               {/* Bodies */}
               <div className="space-y-3 pt-2 border-t border-[#2a2e39]">
                 <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider">
-                  Тело свечи (Body)
+                  Тело свечи (Поддержка HEX # и RGB rgb(...))
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex items-center justify-between p-3 bg-[#131722] border border-[#2a2e39] rounded-xl">
-                    <span className="text-xs text-white">Растущая (Up)</span>
-                    <input
-                      type="color"
-                      value={candleColors.upColor}
-                      onChange={(e) => updateCandleColors({ upColor: e.target.value })}
-                      className="w-8 h-8 rounded cursor-pointer border border-[#363a45] bg-transparent"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-[#131722] border border-[#2a2e39] rounded-xl">
-                    <span className="text-xs text-white">Падающая (Down)</span>
-                    <input
-                      type="color"
-                      value={candleColors.downColor}
-                      onChange={(e) => updateCandleColors({ downColor: e.target.value })}
-                      className="w-8 h-8 rounded cursor-pointer border border-[#363a45] bg-transparent"
-                    />
-                  </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ColorPickerInput
+                    label="Растущая (Up)"
+                    value={candleColors.upColor}
+                    onChange={(color) => updateCandleColors({ upColor: color })}
+                  />
+                  <ColorPickerInput
+                    label="Падающая (Down)"
+                    value={candleColors.downColor}
+                    onChange={(color) => updateCandleColors({ downColor: color })}
+                  />
                 </div>
               </div>
 
@@ -180,25 +172,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                   </label>
                 </div>
                 {candleColors.showBorders && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex items-center justify-between p-3 bg-[#131722] border border-[#2a2e39] rounded-xl">
-                      <span className="text-xs text-white">Граница Up</span>
-                      <input
-                        type="color"
-                        value={candleColors.borderUpColor}
-                        onChange={(e) => updateCandleColors({ borderUpColor: e.target.value })}
-                        className="w-8 h-8 rounded cursor-pointer border border-[#363a45] bg-transparent"
-                      />
-                    </div>
-                    <div className="flex items-center justify-between p-3 bg-[#131722] border border-[#2a2e39] rounded-xl">
-                      <span className="text-xs text-white">Граница Down</span>
-                      <input
-                        type="color"
-                        value={candleColors.borderDownColor}
-                        onChange={(e) => updateCandleColors({ borderDownColor: e.target.value })}
-                        className="w-8 h-8 rounded cursor-pointer border border-[#363a45] bg-transparent"
-                      />
-                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <ColorPickerInput
+                      label="Граница Up"
+                      value={candleColors.borderUpColor}
+                      onChange={(color) => updateCandleColors({ borderUpColor: color })}
+                    />
+                    <ColorPickerInput
+                      label="Граница Down"
+                      value={candleColors.borderDownColor}
+                      onChange={(color) => updateCandleColors({ borderDownColor: color })}
+                    />
                   </div>
                 )}
               </div>
@@ -220,27 +204,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                   </label>
                 </div>
                 {candleColors.showWicks && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex items-center justify-between p-3 bg-[#131722] border border-[#2a2e39] rounded-xl">
-                      <span className="text-xs text-white">Фитиль Up</span>
-                      <input
-                        type="color"
-                        value={candleColors.wickUpColor}
-                        onChange={(e) => updateCandleColors({ wickUpColor: e.target.value })}
-                        className="w-8 h-8 rounded cursor-pointer border border-[#363a45] bg-transparent"
-                      />
-                    </div>
-                    <div className="flex items-center justify-between p-3 bg-[#131722] border border-[#2a2e39] rounded-xl">
-                      <span className="text-xs text-white">Фитиль Down</span>
-                      <input
-                        type="color"
-                        value={candleColors.wickDownColor}
-                        onChange={(e) => updateCandleColors({ wickDownColor: e.target.value })}
-                        className="w-8 h-8 rounded cursor-pointer border border-[#363a45] bg-transparent"
-                      />
-                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <ColorPickerInput
+                      label="Фитиль Up"
+                      value={candleColors.wickUpColor}
+                      onChange={(color) => updateCandleColors({ wickUpColor: color })}
+                    />
+                    <ColorPickerInput
+                      label="Фитиль Down"
+                      value={candleColors.wickDownColor}
+                      onChange={(color) => updateCandleColors({ wickDownColor: color })}
+                    />
                   </div>
                 )}
+              </div>
+
+              {/* Volumes */}
+              <div className="space-y-3 pt-2 border-t border-[#2a2e39]">
+                <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider">
+                  Столбцы объема (Volume)
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ColorPickerInput
+                    label="Объем Up"
+                    value={candleColors.volumeUpColor}
+                    onChange={(color) => updateCandleColors({ volumeUpColor: color })}
+                  />
+                  <ColorPickerInput
+                    label="Объем Down"
+                    value={candleColors.volumeDownColor}
+                    onChange={(color) => updateCandleColors({ volumeDownColor: color })}
+                  />
+                </div>
               </div>
 
               {/* Reset to defaults */}
@@ -436,13 +431,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             </div>
           )}
 
-          {/* TAB 3: APPEARANCE & GRID */}
+          {/* TAB 3: APPEARANCE, BACKGROUND & GRID */}
           {activeTab === 'appearance' && (
             <div className="space-y-6">
               {/* Theme presets */}
               <div>
                 <label className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider block mb-2.5">
-                  Цветовая тема интерфейса
+                  Готовые темы оформления
                 </label>
                 <div className="grid grid-cols-2 gap-3">
                   {[
@@ -478,10 +473,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 </div>
               </div>
 
+              {/* Custom HEX / RGB Background Color */}
+              <div className="space-y-3 pt-2 border-t border-[#2a2e39]">
+                <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider">
+                  Произвольный цвет фона (HEX / RGB)
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ColorPickerInput
+                    label="Цвет фона графика"
+                    value={themeSettings.backgroundColor}
+                    onChange={(color) => updateThemeSettings({ backgroundColor: color })}
+                  />
+                  <ColorPickerInput
+                    label="Цвет линий сетки"
+                    value={themeSettings.gridColor}
+                    onChange={(color) => updateThemeSettings({ gridColor: color })}
+                  />
+                </div>
+              </div>
+
               {/* Grid Lines */}
               <div className="space-y-4 pt-2 border-t border-[#2a2e39]">
                 <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider">
-                  Линии сетки графика
+                  Видимость сетки графика
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <label className="flex items-center justify-between p-3 bg-[#131722] border border-[#2a2e39] rounded-xl cursor-pointer">

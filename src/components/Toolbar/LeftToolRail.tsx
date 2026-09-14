@@ -1,8 +1,8 @@
-import React from 'react';
 import {
   MousePointer2,
   TrendingUp,
   Minus,
+  Square,
   ArrowUpRight,
   ArrowDownRight,
   Ruler,
@@ -16,6 +16,7 @@ export const LeftToolRail: React.FC = () => {
 
   const tools: Array<{ id: DrawingTool; label: string; icon: React.ReactNode }> = [
     { id: 'cursor', label: 'Перекрестие (Crosshair)', icon: <MousePointer2 className="w-4 h-4" /> },
+    { id: 'rectangle', label: 'Прямоугольник (Зона ликвидности / Order Block)', icon: <Square className="w-4 h-4" /> },
     { id: 'trendline', label: 'Трендовая линия', icon: <TrendingUp className="w-4 h-4" /> },
     { id: 'horizontal', label: 'Горизонтальный уровень', icon: <Minus className="w-4 h-4" /> },
     { id: 'position_long', label: 'Длинная позиция (Long R:R)', icon: <ArrowUpRight className="w-4 h-4 text-tv-green" /> },

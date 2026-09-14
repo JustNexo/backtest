@@ -10,6 +10,7 @@ import {
   TrendingDown,
   Loader2,
   Layers,
+  Activity,
 } from 'lucide-react';
 import { useChart } from '../../context/ChartContext';
 import { Timeframe } from '../../types/chart';
@@ -43,9 +44,12 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
     replay,
     startReplaySelection,
     exitReplay,
+    showFractals,
+    setShowFractals,
   } = useChart();
 
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isIndicatorsOpen, setIsIndicatorsOpen] = useState(false);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -167,6 +171,61 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
           <span className="hidden sm:inline">Симулятор рынка</span>
           <span className="text-[10px] px-1 bg-black/20 rounded font-mono">R</span>
         </button>
+
+        {/* Indicators Dropdown (Fractals, etc.) */}
+        <div className="relative">
+          <button
+            onClick={() => setIsIndicatorsOpen(!isIndicatorsOpen)}
+            title="Индикаторы графика (Фракталы и скрипты)"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              showFractals || isIndicatorsOpen
+                ? 'bg-tv-blue text-white'
+                : 'bg-[#1e222d] border border-[#2a2e39] text-tv-text hover:text-white hover:bg-tv-surfaceHover'
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Индикаторы</span>
+            {showFractals && (
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            )}
+          </button>
+
+          {isIndicatorsOpen && (
+            <div className="absolute right-0 top-full mt-2 w-64 bg-[#1e222d] border border-[#2a2e39] rounded-xl shadow-2xl p-2 z-30 space-y-1">
+              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-tv-textMuted border-b border-[#2a2e39]">
+                Встроенные индикаторы
+              </div>
+
+              {/* Fractals Toggle */}
+              <button
+                onClick={() => {
+                  setShowFractals(!showFractals);
+                }}
+                className={`w-full flex items-center justify-between p-2 rounded-lg text-xs transition-colors ${
+                  showFractals
+                    ? 'bg-tv-blue/20 text-white font-medium'
+                    : 'hover:bg-[#131722] text-tv-text'
+                }`}
+              >
+                <div className="flex flex-col text-left">
+                  <span className="font-semibold">Фракталы (Williams Fractals)</span>
+                  <span className="text-[10px] text-tv-textMuted">Пики (▲) и впадины (▼)</span>
+                </div>
+                <div
+                  className={`w-8 h-4 rounded-full transition-colors relative ${
+                    showFractals ? 'bg-tv-blue' : 'bg-[#363a45]'
+                  }`}
+                >
+                  <div
+                    className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-transform ${
+                      showFractals ? 'right-0.5' : 'left-0.5'
+                    }`}
+                  />
+                </div>
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Go To Date (2 years history jump) */}
         <button

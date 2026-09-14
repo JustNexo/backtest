@@ -104,6 +104,10 @@ interface ChartContextType {
   addDrawing: (drawing: DrawingObject) => void;
   removeDrawing: (id: string) => void;
   clearDrawings: () => void;
+
+  // Indicators
+  showFractals: boolean;
+  setShowFractals: (show: boolean) => void;
 }
 
 const ChartContext = createContext<ChartContextType | null>(null);
@@ -140,6 +144,9 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Drawings
   const [activeTool, setActiveTool] = useState<DrawingTool>('cursor');
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
+
+  // Indicators
+  const [showFractals, setShowFractals] = useState<boolean>(false);
 
   // Timer ref for playback
   const playIntervalRef = useRef<number | null>(null);
@@ -736,6 +743,8 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     addDrawing,
     removeDrawing,
     clearDrawings,
+    showFractals,
+    setShowFractals,
   };
 
   return <ChartContext.Provider value={value}>{children}</ChartContext.Provider>;

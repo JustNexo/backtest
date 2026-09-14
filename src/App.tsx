@@ -7,14 +7,19 @@ import { ReplayToolbar } from './components/Replay/ReplayToolbar';
 import { TradingPanel } from './components/Trading/TradingPanel';
 import { SettingsModal } from './components/Settings/SettingsModal';
 import { GoToDateModal } from './components/Header/GoToDateModal';
-import { PropFirmHUD } from './components/Cabinet/PropFirmHUD';
-import { SessionCabinetModal } from './components/Cabinet/SessionCabinetModal';
+import { CabinetPage } from './components/Cabinet/CabinetPage';
 
 export const AppContent: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDateModalOpen, setIsDateModalOpen] = useState(false);
-  const { isCabinetOpen, setIsCabinetOpen } = useChart();
+  const { currentView } = useChart();
 
+  // FX Replay Dedicated Full-Screen Dashboard View
+  if (currentView === 'cabinet') {
+    return <CabinetPage />;
+  }
+
+  // Replay Chart Workspace View
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#131722] text-[#d1d4dc]">
       {/* Top TradingView Navigation Bar */}
@@ -23,15 +28,12 @@ export const AppContent: React.FC = () => {
         onOpenDateModal={() => setIsDateModalOpen(true)}
       />
 
-      {/* Prop Firm Challenge HUD Tracker Strip */}
-      <PropFirmHUD onOpenCabinet={() => setIsCabinetOpen(true)} />
-
       {/* Main Chart Workspace */}
       <div className="flex-1 flex flex-row overflow-hidden relative">
         {/* Left TradingView Tool Rail */}
         <LeftToolRail />
 
-        {/* Central Chart & Replay Toolbar */}
+        {/* Central Chart & Floating Replay Toolbar */}
         <div className="flex-1 flex flex-col relative overflow-hidden">
           <ReplayToolbar />
           <div className="flex-1 relative overflow-hidden">
@@ -40,10 +42,10 @@ export const AppContent: React.FC = () => {
         </div>
       </div>
 
-      {/* Bottom Collapsible Strategy Tester & Paper Trading Panel */}
+      {/* Bottom Collapsible Strategy Tester & Trading Panel */}
       <TradingPanel />
 
-      {/* Settings & Date Modals */}
+      {/* Modals */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
@@ -52,12 +54,6 @@ export const AppContent: React.FC = () => {
       <GoToDateModal
         isOpen={isDateModalOpen}
         onClose={() => setIsDateModalOpen(false)}
-      />
-
-      {/* FX Replay Personal Cabinet & Session Manager Modal */}
-      <SessionCabinetModal
-        isOpen={isCabinetOpen}
-        onClose={() => setIsCabinetOpen(false)}
       />
     </div>
   );

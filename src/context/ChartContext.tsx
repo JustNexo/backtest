@@ -166,7 +166,11 @@ interface ChartContextType {
   updatePropFirmRules: (rules: Partial<PropFirmRuleSettings>) => void;
   propFirmEvaluation: PropFirmEvaluationResult;
 
-  // Cabinet Modal Visibility
+  // View Navigation
+  currentView: 'chart' | 'cabinet';
+  setCurrentView: (view: 'chart' | 'cabinet') => void;
+
+  // Cabinet Modal Visibility (backward compatible)
   isCabinetOpen: boolean;
   setIsCabinetOpen: (open: boolean) => void;
 }
@@ -194,10 +198,14 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [allCandles, setAllCandles] = useState<Candle[]>([]);
 
-  // Cabinet & Sessions State
+  // Cabinet & Sessions View State
   const [sessions, setSessions] = useState<BacktestSession[]>(() => loadStoredSessions());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => loadStoredActiveSessionId());
-  const [isCabinetOpen, setIsCabinetOpen] = useState<boolean>(false);
+  const [currentView, setCurrentView] = useState<'chart' | 'cabinet'>('chart');
+  const isCabinetOpen = currentView === 'cabinet';
+  const setIsCabinetOpen = useCallback((open: boolean) => {
+    setCurrentView(open ? 'cabinet' : 'chart');
+  }, []);
 
   const activeSession = useMemo(() => {
     return sessions.find((s) => s.id === activeSessionId) || null;
@@ -518,7 +526,8 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setActivePosition(null);
       setLimitOrders([]);
 
-      // Jump to start date on chart
+      // Jump to start date on chart and switch to chart view
+      setCurrentView('chart');
       await jumpToTimestamp(params.startDate);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -545,6 +554,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setLimitOrders(sess.limitOrders || []);
 
       const targetTime = sess.currentReplayTime || sess.startDate;
+      setCurrentView('chart');
       await jumpToTimestamp(targetTime);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1170,6 +1180,8 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     propFirmRules,
     updatePropFirmRules,
     propFirmEvaluation,
+    currentView,
+    setCurrentView,
     isCabinetOpen,
     setIsCabinetOpen,
   };

@@ -26,7 +26,7 @@ import { calculateRiskPosition } from '../../services/tradeEngine';
 import { formatCurrency, formatDateTime, formatPercent, formatPrice } from '../../utils/formatters';
 
 export const TradingPanel: React.FC = () => {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'trade' | 'position' | 'orders' | 'history' | 'metrics'>('trade');
 
   const {

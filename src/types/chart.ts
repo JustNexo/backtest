@@ -91,6 +91,10 @@ export interface DrawingObject {
   type: DrawingTool;
   points: DrawingPoint[];
   color?: string;
+  fillColor?: string;
+  fillOpacity?: number;
+  lineWidth?: number;
+  lineStyle?: 'solid' | 'dashed';
   riskReward?: {
     entryPrice: number;
     stopLossPrice: number;

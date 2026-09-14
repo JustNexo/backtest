@@ -105,6 +105,7 @@ interface ChartContextType {
   setActiveTool: (tool: DrawingTool) => void;
   drawings: DrawingObject[];
   addDrawing: (drawing: DrawingObject) => void;
+  updateDrawing: (id: string, updated: Partial<DrawingObject>) => void;
   removeDrawing: (id: string) => void;
   clearDrawings: () => void;
 
@@ -745,6 +746,12 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setDrawings((prev) => [...prev, drawing]);
   }, []);
 
+  const updateDrawing = useCallback((id: string, updated: Partial<DrawingObject>) => {
+    setDrawings((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, ...updated } : d))
+    );
+  }, []);
+
   const removeDrawing = useCallback((id: string) => {
     setDrawings((prev) => prev.filter((d) => d.id !== id));
   }, []);
@@ -801,6 +808,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setActiveTool,
     drawings,
     addDrawing,
+    updateDrawing,
     removeDrawing,
     clearDrawings,
     showFractals,

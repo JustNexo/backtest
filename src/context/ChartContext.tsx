@@ -103,11 +103,15 @@ interface ChartContextType {
   // Drawing Tools
   activeTool: DrawingTool;
   setActiveTool: (tool: DrawingTool) => void;
+  selectedDrawingId: string | null;
+  setSelectedDrawingId: (id: string | null) => void;
   drawings: DrawingObject[];
   addDrawing: (drawing: DrawingObject) => void;
   updateDrawing: (id: string, updated: Partial<DrawingObject>) => void;
   removeDrawing: (id: string) => void;
   clearDrawings: () => void;
+  registerViewportCenterGetter: (getter: () => { time: number; price: number } | null) => void;
+  getViewportCenter: () => { time: number; price: number } | null;
 
   // Indicators
   showFractals: boolean;
@@ -155,6 +159,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Drawings
   const [activeTool, setActiveTool] = useState<DrawingTool>('cursor');
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
 
   // Indicators
@@ -760,6 +765,33 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setDrawings([]);
   }, []);
 
+  const viewportCenterGetterRef = useRef<(() => { time: number; price: number } | null) | null>(null);
+
+  const registerViewportCenterGetter = useCallback((getter: () => { time: number; price: number } | null) => {
+    viewportCenterGetterRef.current = getter;
+  }, []);
+
+  const getViewportCenter = useCallback(() => {
+    if (viewportCenterGetterRef.current) {
+      try {
+        const center = viewportCenterGetterRef.current();
+        if (center && !isNaN(center.time) && !isNaN(center.price)) {
+          return center;
+        }
+      } catch (err) {
+        console.warn('Failed to calculate viewport center:', err);
+      }
+    }
+    if (currentCandle) {
+      return { time: currentCandle.time, price: currentCandle.close };
+    }
+    if (visibleCandles.length > 0) {
+      const last = visibleCandles[visibleCandles.length - 1];
+      return { time: last.time, price: last.close };
+    }
+    return null;
+  }, [currentCandle, visibleCandles]);
+
   const value = {
     symbol,
     timeframe,
@@ -806,6 +838,8 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     updateLimitOrderTP,
     activeTool,
     setActiveTool,
+    selectedDrawingId,
+    setSelectedDrawingId,
     drawings,
     addDrawing,
     updateDrawing,
@@ -817,6 +851,8 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setTimezone,
     orderSetup,
     updateOrderSetup,
+    registerViewportCenterGetter,
+    getViewportCenter,
   };
 
   return <ChartContext.Provider value={value}>{children}</ChartContext.Provider>;

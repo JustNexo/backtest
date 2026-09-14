@@ -104,3 +104,19 @@ export function formatTickMark(
     return null;
   }
 }
+
+export function getTimeframeSeconds(tf: string): number {
+  switch (tf) {
+    case '1m': return 60;
+    case '3m': return 180;
+    case '5m': return 300;
+    case '15m': return 900;
+    case '30m': return 1800;
+    case '1h': return 3600;
+    case '2h': return 7200;
+    case '4h': return 14400;
+    case '1d': return 86400;
+    case '1w': return 604800;
+    default: return 300;
+  }
+}

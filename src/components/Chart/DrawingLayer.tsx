@@ -86,16 +86,17 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
   const {
     activeTool,
     setActiveTool,
+    selectedDrawingId,
+    setSelectedDrawingId,
     drawings,
     addDrawing,
     updateDrawing,
     removeDrawing,
     visibleCandles,
     timeframe,
+    registerViewportCenterGetter,
   } = useChart();
 
-  // Selection & Transform state
-  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
 
   // Temporary points while initially creating a drawing
@@ -104,6 +105,58 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
 
   // Force re-render on chart pan/zoom
   const [, setTick] = useState(0);
+
+  // Register viewport center getter so toolbar buttons place objects right in the user's viewport center
+  useEffect(() => {
+    registerViewportCenterGetter(() => {
+      if (!chart || !candleSeries || !containerRef.current) return null;
+      const rect = containerRef.current.getBoundingClientRect();
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+
+      let time = chart.timeScale().coordinateToTime(centerX);
+      if (time === null && visibleCandles.length > 0) {
+        const logical = chart.timeScale().coordinateToLogical(centerX);
+        if (logical !== null) {
+          const roundIdx = Math.round(logical);
+          if (roundIdx >= 0 && roundIdx < visibleCandles.length) {
+            time = visibleCandles[roundIdx].time as Time;
+          } else if (roundIdx >= visibleCandles.length) {
+            const lastCandle = visibleCandles[visibleCandles.length - 1];
+            const tfSec = getTimeframeSeconds(timeframe);
+            const diffBars = roundIdx - (visibleCandles.length - 1);
+            time = (lastCandle.time + diffBars * tfSec) as Time;
+          } else {
+            const firstCandle = visibleCandles[0];
+            const tfSec = getTimeframeSeconds(timeframe);
+            time = (firstCandle.time + roundIdx * tfSec) as Time;
+          }
+        }
+      }
+
+      const price = candleSeries.coordinateToPrice(centerY);
+      if (time === null || price === null || isNaN(price)) return null;
+      return { time: Number(time), price: Number(price.toFixed(1)) };
+    });
+
+    return () => {
+      registerViewportCenterGetter(() => null);
+    };
+  }, [chart, candleSeries, containerRef, visibleCandles, timeframe, registerViewportCenterGetter]);
+
+  // Click on empty chart to deselect active drawing
+  useEffect(() => {
+    if (!chart) return;
+    const handleClick = () => {
+      if (activeTool === 'cursor') {
+        setSelectedDrawingId(null);
+      }
+    };
+    chart.subscribeClick(handleClick);
+    return () => {
+      chart.unsubscribeClick(handleClick);
+    };
+  }, [chart, activeTool, setSelectedDrawingId]);
 
   useEffect(() => {
     if (!chart) return;
@@ -485,10 +538,32 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     <div
       onClick={handleLayerClick}
       onMouseMove={handleMouseMoveCreation}
-      className={`absolute inset-0 z-15 ${
+      className={`absolute inset-0 z-20 ${
         isCreating ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'
       }`}
     >
+      {/* Top Banner when in drawing mode */}
+      {isCreating && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-auto bg-[#1e222d]/95 backdrop-blur-md border border-tv-blue px-3.5 py-1.5 rounded-xl shadow-2xl flex items-center gap-3 text-xs">
+          <span className="text-tv-blue font-semibold">
+            {activeTool === 'rectangle' && 'Режим рисования: Прямоугольник (кликните 2 точки на графике)'}
+            {activeTool === 'trendline' && 'Режим рисования: Трендовая линия (кликните 2 точки на графике)'}
+            {activeTool === 'horizontal' && 'Режим рисования: Горизонтальный уровень (кликните по уровню цены)'}
+          </span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTool('cursor');
+              setStartPoint(null);
+              setCurrentMousePoint(null);
+            }}
+            className="px-2 py-0.5 bg-[#2a2e39] hover:bg-[#363a45] text-white rounded text-[11px] font-medium transition-colors"
+          >
+            Отмена (Esc)
+          </button>
+        </div>
+      )}
+
       <svg className="w-full h-full overflow-hidden">
         {/* ========================================================================= */}
         {/* 1. SAVED DRAWINGS                                                         */}
@@ -522,6 +597,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   width={width}
                   height={height}
                   fill={drawing.fillColor || 'rgba(41, 98, 255, 0.22)'}
+                  pointerEvents="all"
                   stroke={drawing.color || '#2962ff'}
                   strokeWidth={drawing.lineWidth || 2}
                   strokeDasharray={drawing.lineStyle === 'dashed' ? '6 3' : undefined}
@@ -555,7 +631,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                       className="cursor-nwse-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения размера (NW)</title>
-                      <circle cx={left} cy={top} r="12" fill="transparent" />
+                      <circle cx={left} cy={top} r="14" fill="transparent" pointerEvents="all" />
                       <circle cx={left} cy={top} r="4.5" fill="#ffffff" stroke={drawing.color || '#2962ff'} strokeWidth="2" />
                     </g>
 
@@ -565,7 +641,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                       className="cursor-ns-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения высоты (N)</title>
-                      <circle cx={midX} cy={top} r="12" fill="transparent" />
+                      <circle cx={midX} cy={top} r="14" fill="transparent" pointerEvents="all" />
                       <circle cx={midX} cy={top} r="4.5" fill="#ffffff" stroke={drawing.color || '#2962ff'} strokeWidth="2" />
                     </g>
 
@@ -575,7 +651,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                       className="cursor-nesw-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения размера (NE)</title>
-                      <circle cx={right} cy={top} r="12" fill="transparent" />
+                      <circle cx={right} cy={top} r="14" fill="transparent" pointerEvents="all" />
                       <circle cx={right} cy={top} r="4.5" fill="#ffffff" stroke={drawing.color || '#2962ff'} strokeWidth="2" />
                     </g>
 
@@ -585,7 +661,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                       className="cursor-ew-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения ширины (E)</title>
-                      <circle cx={right} cy={midY} r="12" fill="transparent" />
+                      <circle cx={right} cy={midY} r="14" fill="transparent" pointerEvents="all" />
                       <circle cx={right} cy={midY} r="4.5" fill="#ffffff" stroke={drawing.color || '#2962ff'} strokeWidth="2" />
                     </g>
 
@@ -595,7 +671,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                       className="cursor-nwse-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения размера (SE)</title>
-                      <circle cx={right} cy={bottom} r="12" fill="transparent" />
+                      <circle cx={right} cy={bottom} r="14" fill="transparent" pointerEvents="all" />
                       <circle cx={right} cy={bottom} r="4.5" fill="#ffffff" stroke={drawing.color || '#2962ff'} strokeWidth="2" />
                     </g>
 
@@ -605,7 +681,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                       className="cursor-ns-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения высоты (S)</title>
-                      <circle cx={midX} cy={bottom} r="12" fill="transparent" />
+                      <circle cx={midX} cy={bottom} r="14" fill="transparent" pointerEvents="all" />
                       <circle cx={midX} cy={bottom} r="4.5" fill="#ffffff" stroke={drawing.color || '#2962ff'} strokeWidth="2" />
                     </g>
 
@@ -615,7 +691,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                       className="cursor-nesw-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения размера (SW)</title>
-                      <circle cx={left} cy={bottom} r="12" fill="transparent" />
+                      <circle cx={left} cy={bottom} r="14" fill="transparent" pointerEvents="all" />
                       <circle cx={left} cy={bottom} r="4.5" fill="#ffffff" stroke={drawing.color || '#2962ff'} strokeWidth="2" />
                     </g>
 
@@ -625,7 +701,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                       className="cursor-ew-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения ширины (W)</title>
-                      <circle cx={left} cy={midY} r="12" fill="transparent" />
+                      <circle cx={left} cy={midY} r="14" fill="transparent" pointerEvents="all" />
                       <circle cx={left} cy={midY} r="4.5" fill="#ffffff" stroke={drawing.color || '#2962ff'} strokeWidth="2" />
                     </g>
                   </>
@@ -648,7 +724,8 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   x2="100%"
                   y2={p.y}
                   stroke="transparent"
-                  strokeWidth="12"
+                  strokeWidth="14"
+                  pointerEvents="all"
                   onMouseDown={(e) => handleStartDrag(e, drawing.id, 'horz_price')}
                   className="cursor-ns-resize pointer-events-auto"
                 />
@@ -677,6 +754,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     height="20"
                     rx="4"
                     fill={drawing.color || '#f7a600'}
+                    pointerEvents="all"
                     className="shadow-md"
                   />
                   <text
@@ -712,7 +790,8 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   x2={p2.x}
                   y2={p2.y}
                   stroke="transparent"
-                  strokeWidth="14"
+                  strokeWidth="16"
+                  pointerEvents="all"
                   onMouseDown={(e) => handleStartDrag(e, drawing.id, 'move')}
                   className="cursor-move pointer-events-auto"
                 />
@@ -734,11 +813,11 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   className="cursor-pointer pointer-events-auto"
                 >
                   <title>Тяните точку 1 трендовой линии</title>
-                  <circle cx={p1.x} cy={p1.y} r="12" fill="transparent" />
+                  <circle cx={p1.x} cy={p1.y} r="14" fill="transparent" pointerEvents="all" />
                   <circle
                     cx={p1.x}
                     cy={p1.y}
-                    r={isSelected ? '5' : '3.5'}
+                    r={isSelected ? '5.5' : '4'}
                     fill="#ffffff"
                     stroke={drawing.color || '#089981'}
                     strokeWidth="2"
@@ -751,11 +830,11 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   className="cursor-pointer pointer-events-auto"
                 >
                   <title>Тяните точку 2 трендовой линии</title>
-                  <circle cx={p2.x} cy={p2.y} r="12" fill="transparent" />
+                  <circle cx={p2.x} cy={p2.y} r="14" fill="transparent" pointerEvents="all" />
                   <circle
                     cx={p2.x}
                     cy={p2.y}
-                    r={isSelected ? '5' : '3.5'}
+                    r={isSelected ? '5.5' : '4'}
                     fill="#ffffff"
                     stroke={drawing.color || '#089981'}
                     strokeWidth="2"

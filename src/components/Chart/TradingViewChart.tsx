@@ -59,6 +59,8 @@ export const TradingViewChart: React.FC = () => {
 
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [isTzDropdownOpen, setIsTzDropdownOpen] = useState(false);
+  const [chartInstance, setChartInstance] = useState<IChartApi | null>(null);
+  const [candleSeriesInstance, setCandleSeriesInstance] = useState<ISeriesApi<'Candlestick'> | null>(null);
 
   const {
     visibleCandles,
@@ -189,6 +191,8 @@ export const TradingViewChart: React.FC = () => {
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+    setChartInstance(chart);
+    setCandleSeriesInstance(candleSeries);
 
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
       forceUpdate();
@@ -209,6 +213,8 @@ export const TradingViewChart: React.FC = () => {
       chartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      setChartInstance(null);
+      setCandleSeriesInstance(null);
     };
   }, []);
 
@@ -896,8 +902,8 @@ export const TradingViewChart: React.FC = () => {
 
       {/* Interactive Drawing Layer (Rectangles, Lines, Levels) */}
       <DrawingLayer
-        chart={chartRef.current}
-        candleSeries={candleSeriesRef.current}
+        chart={chartInstance}
+        candleSeries={candleSeriesInstance}
         containerRef={containerRef}
       />
     </div>

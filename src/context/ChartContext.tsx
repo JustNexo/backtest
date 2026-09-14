@@ -12,6 +12,7 @@ import {
 import {
   BacktestMetrics,
   ClosedTrade,
+  LimitOrder,
   Position,
   PositionSide,
   RiskSettings,
@@ -78,13 +79,23 @@ interface ChartContextType {
   balance: number;
   initialBalance: number;
   activePosition: Position | null;
+  limitOrders: LimitOrder[];
   closedTrades: ClosedTrade[];
   metrics: BacktestMetrics;
   riskSettings: RiskSettings;
   updateRiskSettings: (settings: Partial<RiskSettings>) => void;
   executeTrade: (side: PositionSide, customSl?: number, customTp?: number) => boolean;
+  addLimitOrder: (side: PositionSide, limitPrice: number, customSl?: number, customTp?: number) => boolean;
+  cancelLimitOrder: (id: string) => void;
   closeActivePosition: () => void;
   resetBacktest: () => void;
+
+  // Chart drag updates
+  updateActivePositionSL: (newSl: number) => void;
+  updateActivePositionTP: (newTp: number) => void;
+  updateLimitOrderPrice: (id: string, newPrice: number) => void;
+  updateLimitOrderSL: (id: string, newSl: number) => void;
+  updateLimitOrderTP: (id: string, newTp: number) => void;
 
   // Drawing Tools
   activeTool: DrawingTool;
@@ -122,6 +133,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const initialBalance = 10000;
   const [balance, setBalance] = useState<number>(initialBalance);
   const [activePosition, setActivePosition] = useState<Position | null>(null);
+  const [limitOrders, setLimitOrders] = useState<LimitOrder[]>([]);
   const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
   const [riskSettings, setRiskSettings] = useState<RiskSettings>(loadStoredRiskSettings);
 
@@ -132,12 +144,14 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Timer ref for playback
   const playIntervalRef = useRef<number | null>(null);
 
-  // Load candles when timeframe changes
+  // Load candles when timeframe changes (keeping replay cut timestamp in sync!)
   useEffect(() => {
     let isMounted = true;
     setIsLoading(true);
 
-    getCandlesForTimeframe(timeframe)
+    const targetTs = replay.isActive && replay.currentCutTime ? replay.currentCutTime : null;
+
+    getCandlesForTimeframe(timeframe, { targetTimestamp: targetTs })
       .then((data) => {
         if (!isMounted) return;
         setAllCandles(data);
@@ -152,15 +166,21 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             };
           }
 
-          let idx = data.findIndex((c) => c.time >= prev.currentCutTime!);
-          if (idx === -1) idx = data.length - 1;
-          if (idx > 0 && data[idx].time > prev.currentCutTime!) {
-            idx = idx - 1;
+          // Find the last candle whose time is <= prev.currentCutTime
+          let idx = -1;
+          for (let i = 0; i < data.length; i++) {
+            if (data[i].time <= prev.currentCutTime!) {
+              idx = i;
+            } else {
+              break;
+            }
           }
+
+          if (idx === -1) idx = 0;
 
           return {
             ...prev,
-            currentIndex: idx >= 0 ? idx : data.length - 1,
+            currentIndex: idx,
           };
         });
       })
@@ -172,7 +192,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => {
       isMounted = false;
     };
-  }, [timeframe]);
+  }, [timeframe]); // depends on timeframe
 
   // Sliced visible candles
   const visibleCandles = useMemo(() => {
@@ -187,23 +207,56 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return visibleCandles[visibleCandles.length - 1];
   }, [visibleCandles]);
 
-  // Evaluate active position when new candle appears (in replay or forward step)
-  const checkPositionAgainstCandle = useCallback(
+  // Evaluate limit orders and active position when new candle appears (in replay or forward step)
+  const processCandleTick = useCallback(
     (candle: Candle) => {
-      if (!activePosition) return;
+      // 1. Check Pending Limit Orders
+      setLimitOrders((prevOrders) => {
+        const remaining: LimitOrder[] = [];
+        for (const order of prevOrders) {
+          let triggered = false;
+          if (order.side === 'long' && candle.low <= order.limitPrice) {
+            triggered = true;
+          } else if (order.side === 'short' && candle.high >= order.limitPrice) {
+            triggered = true;
+          }
 
-      const evalResult = evaluatePositionWithCandle(activePosition, candle, feeSettings);
-      if (evalResult.isClosed && evalResult.closedTrade) {
-        // Trade closed by SL or TP
-        const trade = evalResult.closedTrade;
-        setClosedTrades((prev) => [trade, ...prev]);
-        setBalance((prev) => Number((prev + trade.netPnl).toFixed(2)));
-        setActivePosition(null);
-      } else if (evalResult.updatedPosition) {
-        setActivePosition(evalResult.updatedPosition);
-      }
+          if (triggered) {
+            // Fill limit order
+            const newPos = engineOpenPosition(
+              order.side,
+              order.limitPrice,
+              order.size,
+              order.stopLoss,
+              order.takeProfit,
+              candle.time,
+              feeSettings
+            );
+            setActivePosition(newPos);
+          } else {
+            remaining.push(order);
+          }
+        }
+        return remaining;
+      });
+
+      // 2. Check Active Position
+      setActivePosition((pos) => {
+        if (!pos) return null;
+
+        const evalResult = evaluatePositionWithCandle(pos, candle, feeSettings);
+        if (evalResult.isClosed && evalResult.closedTrade) {
+          const trade = evalResult.closedTrade;
+          setClosedTrades((prev) => [trade, ...prev]);
+          setBalance((prev) => Number((prev + trade.netPnl).toFixed(2)));
+          return null;
+        } else if (evalResult.updatedPosition) {
+          return evalResult.updatedPosition;
+        }
+        return pos;
+      });
     },
-    [activePosition, feeSettings]
+    [feeSettings]
   );
 
   // Replay Actions
@@ -225,11 +278,15 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const cutAtTime = useCallback(
     (timestampSeconds: number) => {
       if (allCandles.length === 0) return;
-      let idx = allCandles.findIndex((c) => c.time >= timestampSeconds);
-      if (idx === -1) idx = allCandles.length - 1;
-      if (idx > 0 && allCandles[idx].time > timestampSeconds) {
-        idx = idx - 1;
+      let idx = -1;
+      for (let i = 0; i < allCandles.length; i++) {
+        if (allCandles[i].time <= timestampSeconds) {
+          idx = i;
+        } else {
+          break;
+        }
       }
+      if (idx === -1) idx = 0;
       const finalTime = allCandles[idx]?.time ?? timestampSeconds;
 
       setReplay({
@@ -253,9 +310,9 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const nextCandle = allCandles[nextIdx];
       const nextTime = nextCandle?.time ?? prev.currentCutTime;
 
-      // Evaluate active position on next candle
+      // Evaluate limit orders & active position
       if (nextCandle) {
-        checkPositionAgainstCandle(nextCandle);
+        processCandleTick(nextCandle);
       }
 
       return {
@@ -264,7 +321,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         currentCutTime: nextTime,
       };
     });
-  }, [allCandles, checkPositionAgainstCandle]);
+  }, [allCandles, processCandleTick]);
 
   const stepBackward = useCallback(() => {
     setReplay((prev) => {
@@ -327,8 +384,16 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try {
         const fetched = await fetchHistoricalDateRange(timeframe, timestampSeconds);
         setAllCandles(fetched);
-        let idx = fetched.findIndex((c) => c.time >= timestampSeconds);
-        if (idx === -1) idx = fetched.length - 1;
+        let idx = -1;
+        for (let i = 0; i < fetched.length; i++) {
+          if (fetched[i].time <= timestampSeconds) {
+            idx = i;
+          } else {
+            break;
+          }
+        }
+        if (idx === -1) idx = 0;
+
         setReplay({
           isActive: true,
           isSelectingCutPoint: false,
@@ -357,7 +422,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const nextIdx = prev.currentIndex + 1;
           const nextCandle = allCandles[nextIdx];
           if (nextCandle) {
-            checkPositionAgainstCandle(nextCandle);
+            processCandleTick(nextCandle);
           }
           return {
             ...prev,
@@ -377,12 +442,11 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         playIntervalRef.current = null;
       }
     };
-  }, [replay.isPlaying, replay.isActive, replay.playbackSpeed, allCandles, checkPositionAgainstCandle]);
+  }, [replay.isPlaying, replay.isActive, replay.playbackSpeed, allCandles, processCandleTick]);
 
-  // Keyboard shortcuts: Space (Play/Pause), ArrowRight (Next), ArrowLeft (Prev), R (Replay toggle)
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger shortcuts if typing inside an input or textarea
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
@@ -466,12 +530,10 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!currentCandle) return false;
       const entryPrice = currentCandle.close;
 
-      // Default SL distance if not explicitly provided
       let sl = customSl;
       let tp = customTp;
 
       if (!sl) {
-        // Default 0.8% distance
         sl = side === 'long' ? entryPrice * 0.992 : entryPrice * 1.008;
       }
       if (!tp) {
@@ -485,7 +547,6 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return false;
       }
 
-      // If existing position open, close it first
       if (activePosition) {
         const closed = closePositionManually(
           activePosition,
@@ -513,6 +574,48 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [currentCandle, balance, riskSettings, activePosition, feeSettings]
   );
 
+  const addLimitOrder = useCallback(
+    (side: PositionSide, limitPrice: number, customSl?: number, customTp?: number): boolean => {
+      if (limitPrice <= 0) return false;
+
+      let sl = customSl;
+      let tp = customTp;
+
+      if (!sl) {
+        sl = side === 'long' ? limitPrice * 0.992 : limitPrice * 1.008;
+      }
+      if (!tp) {
+        const slDist = Math.abs(limitPrice - sl);
+        tp = side === 'long' ? limitPrice + slDist * riskSettings.defaultTpRatio : limitPrice - slDist * riskSettings.defaultTpRatio;
+      }
+
+      const riskCalc = calculateRiskPosition(balance, riskSettings, limitPrice, sl, tp);
+      if (!riskCalc.isValid || riskCalc.sizeBtc <= 0) {
+        console.warn('Invalid limit order calculation:', riskCalc.error);
+        return false;
+      }
+
+      const order: LimitOrder = {
+        id: `limit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        side,
+        limitPrice: Number(limitPrice.toFixed(1)),
+        size: riskCalc.sizeBtc,
+        stopLoss: Number(sl.toFixed(1)),
+        takeProfit: Number(tp.toFixed(1)),
+        createdTime: currentCandle?.time || Math.floor(Date.now() / 1000),
+        riskUsd: riskCalc.riskUsd,
+      };
+
+      setLimitOrders((prev) => [...prev, order]);
+      return true;
+    },
+    [balance, riskSettings, currentCandle]
+  );
+
+  const cancelLimitOrder = useCallback((id: string) => {
+    setLimitOrders((prev) => prev.filter((o) => o.id !== id));
+  }, []);
+
   const closeActivePosition = useCallback(() => {
     if (!activePosition || !currentCandle) return;
     const closed = closePositionManually(
@@ -529,7 +632,41 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const resetBacktest = useCallback(() => {
     setBalance(initialBalance);
     setActivePosition(null);
+    setLimitOrders([]);
     setClosedTrades([]);
+  }, []);
+
+  // Real-time draggable line updates
+  const updateActivePositionSL = useCallback((newSl: number) => {
+    setActivePosition((prev) => {
+      if (!prev) return null;
+      return { ...prev, stopLoss: Number(newSl.toFixed(1)) };
+    });
+  }, []);
+
+  const updateActivePositionTP = useCallback((newTp: number) => {
+    setActivePosition((prev) => {
+      if (!prev) return null;
+      return { ...prev, takeProfit: Number(newTp.toFixed(1)) };
+    });
+  }, []);
+
+  const updateLimitOrderPrice = useCallback((id: string, newPrice: number) => {
+    setLimitOrders((prev) =>
+      prev.map((o) => (o.id === id ? { ...o, limitPrice: Number(newPrice.toFixed(1)) } : o))
+    );
+  }, []);
+
+  const updateLimitOrderSL = useCallback((id: string, newSl: number) => {
+    setLimitOrders((prev) =>
+      prev.map((o) => (o.id === id ? { ...o, stopLoss: Number(newSl.toFixed(1)) } : o))
+    );
+  }, []);
+
+  const updateLimitOrderTP = useCallback((id: string, newTp: number) => {
+    setLimitOrders((prev) =>
+      prev.map((o) => (o.id === id ? { ...o, takeProfit: Number(newTp.toFixed(1)) } : o))
+    );
   }, []);
 
   const metrics = useMemo(() => {
@@ -578,13 +715,21 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     balance,
     initialBalance,
     activePosition,
+    limitOrders,
     closedTrades,
     metrics,
     riskSettings,
     updateRiskSettings,
     executeTrade,
+    addLimitOrder,
+    cancelLimitOrder,
     closeActivePosition,
     resetBacktest,
+    updateActivePositionSL,
+    updateActivePositionTP,
+    updateLimitOrderPrice,
+    updateLimitOrderSL,
+    updateLimitOrderTP,
     activeTool,
     setActiveTool,
     drawings,

@@ -19,6 +19,17 @@ export interface Position {
   lastSwapCheckTime: number;
 }
 
+export interface LimitOrder {
+  id: string;
+  side: PositionSide;
+  limitPrice: number;
+  size: number; // in BTC
+  stopLoss: number | null;
+  takeProfit: number | null;
+  createdTime: number;
+  riskUsd: number;
+}
+
 export interface ClosedTrade {
   id: string;
   side: PositionSide;

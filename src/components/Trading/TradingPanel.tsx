@@ -14,6 +14,10 @@ import {
   DollarSign,
   Shield,
   Layers,
+  Clock,
+  X,
+  Crosshair,
+  Sparkles,
 } from 'lucide-react';
 import { useChart } from '../../context/ChartContext';
 import { calculateRiskPosition } from '../../services/tradeEngine';
@@ -21,44 +25,61 @@ import { formatCurrency, formatDateTime, formatPercent, formatPrice } from '../.
 
 export const TradingPanel: React.FC = () => {
   const [isExpanded, setIsExpanded] = useState(true);
-  const [activeTab, setActiveTab] = useState<'trade' | 'position' | 'history' | 'metrics'>('trade');
+  const [activeTab, setActiveTab] = useState<'trade' | 'position' | 'orders' | 'history' | 'metrics'>('trade');
 
   const {
     balance,
     initialBalance,
     currentCandle,
     activePosition,
+    limitOrders,
     closedTrades,
     metrics,
     riskSettings,
     updateRiskSettings,
     executeTrade,
+    addLimitOrder,
+    cancelLimitOrder,
     closeActivePosition,
     resetBacktest,
     feeSettings,
   } = useChart();
 
-  // Local inputs for Entry, SL, TP
+  // Order Type: Market vs Limit
+  const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
+  const [tradeSide, setTradeSide] = useState<'long' | 'short'>('long');
+
   const currentPrice = currentCandle?.close || 65000;
+  const [customLimitPrice, setCustomLimitPrice] = useState<string>('');
   const [customSlPrice, setCustomSlPrice] = useState<string>('');
   const [customTpPrice, setCustomTpPrice] = useState<string>('');
-  const [tradeSide, setTradeSide] = useState<'long' | 'short'>('long');
+
+  // Effective Entry Price (limit price if limit order, else current market price)
+  const defaultLimitPrice = useMemo(() => {
+    return tradeSide === 'long'
+      ? (currentPrice * 0.995).toFixed(1)
+      : (currentPrice * 1.005).toFixed(1);
+  }, [currentPrice, tradeSide]);
+
+  const effectiveEntryPrice = orderType === 'limit'
+    ? (parseFloat(customLimitPrice) || parseFloat(defaultLimitPrice))
+    : currentPrice;
 
   // Calculated suggested SL & TP when prices change
   const defaultSl = useMemo(() => {
     return tradeSide === 'long'
-      ? (currentPrice * 0.992).toFixed(1)
-      : (currentPrice * 1.008).toFixed(1);
-  }, [currentPrice, tradeSide]);
+      ? (effectiveEntryPrice * 0.992).toFixed(1)
+      : (effectiveEntryPrice * 1.008).toFixed(1);
+  }, [effectiveEntryPrice, tradeSide]);
 
   const slPriceNumber = parseFloat(customSlPrice) || parseFloat(defaultSl);
-  const slDist = Math.abs(currentPrice - slPriceNumber);
+  const slDist = Math.abs(effectiveEntryPrice - slPriceNumber);
 
   const defaultTp = useMemo(() => {
     return tradeSide === 'long'
-      ? (currentPrice + slDist * riskSettings.defaultTpRatio).toFixed(1)
-      : (currentPrice - slDist * riskSettings.defaultTpRatio).toFixed(1);
-  }, [currentPrice, slDist, tradeSide, riskSettings.defaultTpRatio]);
+      ? (effectiveEntryPrice + slDist * riskSettings.defaultTpRatio).toFixed(1)
+      : (effectiveEntryPrice - slDist * riskSettings.defaultTpRatio).toFixed(1);
+  }, [effectiveEntryPrice, slDist, tradeSide, riskSettings.defaultTpRatio]);
 
   const tpPriceNumber = parseFloat(customTpPrice) || parseFloat(defaultTp);
 
@@ -67,15 +88,22 @@ export const TradingPanel: React.FC = () => {
     return calculateRiskPosition(
       balance,
       riskSettings,
-      currentPrice,
+      effectiveEntryPrice,
       slPriceNumber,
       tpPriceNumber
     );
-  }, [balance, riskSettings, currentPrice, slPriceNumber, tpPriceNumber]);
+  }, [balance, riskSettings, effectiveEntryPrice, slPriceNumber, tpPriceNumber]);
 
-  const handleOpenTrade = (side: 'long' | 'short') => {
+  const handleOpenMarketTrade = (side: 'long' | 'short') => {
     executeTrade(side, slPriceNumber, tpPriceNumber);
     setActiveTab('position');
+  };
+
+  const handlePlaceLimitOrder = (side: 'long' | 'short') => {
+    const success = addLimitOrder(side, effectiveEntryPrice, slPriceNumber, tpPriceNumber);
+    if (success) {
+      setActiveTab('orders');
+    }
   };
 
   const handleExportCsv = () => {
@@ -128,7 +156,7 @@ export const TradingPanel: React.FC = () => {
               onClick={() => { setActiveTab('trade'); setIsExpanded(true); }}
               className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
                 activeTab === 'trade' && isExpanded
-                  ? 'bg-tv-blue text-white'
+                  ? 'bg-tv-blue text-white font-semibold'
                   : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
               }`}
             >
@@ -140,7 +168,7 @@ export const TradingPanel: React.FC = () => {
               onClick={() => { setActiveTab('position'); setIsExpanded(true); }}
               className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
                 activeTab === 'position' && isExpanded
-                  ? 'bg-tv-blue text-white'
+                  ? 'bg-tv-blue text-white font-semibold'
                   : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
               }`}
             >
@@ -152,10 +180,27 @@ export const TradingPanel: React.FC = () => {
             </button>
 
             <button
+              onClick={() => { setActiveTab('orders'); setIsExpanded(true); }}
+              className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+                activeTab === 'orders' && isExpanded
+                  ? 'bg-tv-blue text-white font-semibold'
+                  : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>Лимитные ордера</span>
+              {limitOrders.length > 0 && (
+                <span className="px-1.5 py-0.2 bg-[#f7a600] text-black text-[10px] font-bold rounded-full">
+                  {limitOrders.length}
+                </span>
+              )}
+            </button>
+
+            <button
               onClick={() => { setActiveTab('history'); setIsExpanded(true); }}
               className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
                 activeTab === 'history' && isExpanded
-                  ? 'bg-tv-blue text-white'
+                  ? 'bg-tv-blue text-white font-semibold'
                   : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
               }`}
             >
@@ -167,7 +212,7 @@ export const TradingPanel: React.FC = () => {
               onClick={() => { setActiveTab('metrics'); setIsExpanded(true); }}
               className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
                 activeTab === 'metrics' && isExpanded
-                  ? 'bg-tv-blue text-white'
+                  ? 'bg-tv-blue text-white font-semibold'
                   : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
               }`}
             >
@@ -202,7 +247,7 @@ export const TradingPanel: React.FC = () => {
 
           <button
             onClick={resetBacktest}
-            title="Сбросить баланс и историю бэктеста к $10,000"
+            title="Сбросить депозит и историю бэктеста к $10,000"
             className="p-1 text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover rounded transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -212,19 +257,38 @@ export const TradingPanel: React.FC = () => {
 
       {/* Expanded Content Drawer */}
       {isExpanded && (
-        <div className="p-4 bg-[#1e222d] min-h-[190px] max-h-[300px] overflow-y-auto">
+        <div className="p-4 bg-[#1e222d] min-h-[200px] max-h-[320px] overflow-y-auto">
           {/* TAB 1: RISK & POSITION SIZING CALCULATOR */}
           {activeTab === 'trade' && (
             <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-              {/* Column 1: Risk Settings */}
+              {/* Column 1: Order Type & Risk Settings */}
               <div className="md:col-span-4 space-y-3 bg-[#131722] p-3.5 rounded-xl border border-[#2a2e39]">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider flex items-center gap-1.5">
-                    <Shield className="w-3.5 h-3.5 text-tv-blue" />
-                    Расчет риска (MetaTrader)
-                  </span>
+                  {/* Order Type Toggle: Market vs Limit */}
+                  <div className="flex bg-[#1e222d] p-0.5 rounded-lg border border-[#2a2e39]">
+                    <button
+                      onClick={() => setOrderType('market')}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                        orderType === 'market'
+                          ? 'bg-tv-blue text-white shadow-sm'
+                          : 'text-tv-textMuted hover:text-white'
+                      }`}
+                    >
+                      По рынку (Market)
+                    </button>
+                    <button
+                      onClick={() => setOrderType('limit')}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                        orderType === 'limit'
+                          ? 'bg-[#f7a600] text-black shadow-sm'
+                          : 'text-tv-textMuted hover:text-white'
+                      }`}
+                    >
+                      Лимитный (Limit)
+                    </button>
+                  </div>
 
-                  {/* Mode switcher */}
+                  {/* Mode switcher: % vs $ */}
                   <div className="flex bg-[#1e222d] p-0.5 rounded-lg border border-[#2a2e39]">
                     <button
                       onClick={() => updateRiskSettings({ mode: 'percent' })}
@@ -249,13 +313,39 @@ export const TradingPanel: React.FC = () => {
                   </div>
                 </div>
 
+                {/* If Limit Order, show Limit Price Input */}
+                {orderType === 'limit' && (
+                  <div>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <label className="text-tv-text font-medium flex items-center gap-1 text-[#f7a600]">
+                        <Clock className="w-3.5 h-3.5" />
+                        Лимитная цена входа ($)
+                      </label>
+                      <button
+                        onClick={() => setCustomLimitPrice(currentPrice.toFixed(1))}
+                        className="text-[10px] text-tv-textMuted hover:text-white underline"
+                      >
+                        Текущая (${formatPrice(currentPrice, 1)})
+                      </button>
+                    </div>
+                    <input
+                      type="number"
+                      step="0.5"
+                      placeholder={defaultLimitPrice}
+                      value={customLimitPrice}
+                      onChange={(e) => setCustomLimitPrice(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-[#1e222d] border border-[#f7a600]/50 rounded-lg text-xs text-white font-mono focus:border-[#f7a600] focus:outline-none"
+                    />
+                  </div>
+                )}
+
                 {/* Risk input */}
                 <div>
                   <div className="flex items-center justify-between text-xs mb-1">
                     <label className="text-tv-text">
                       {riskSettings.mode === 'percent' ? 'Риск на сделку (% от баланса)' : 'Сумма риска ($)'}
                     </label>
-                    <span className="font-mono text-tv-yellow font-medium">
+                    <span className="font-mono text-tv-yellow font-semibold">
                       ${riskCalc.riskUsd}
                     </span>
                   </div>
@@ -273,7 +363,6 @@ export const TradingPanel: React.FC = () => {
                         }
                         className="w-full px-3 py-1.5 bg-[#1e222d] border border-[#2a2e39] rounded-lg text-xs text-white font-mono focus:border-tv-blue focus:outline-none"
                       />
-                      {/* Quick % buttons */}
                       <div className="flex items-center gap-1 shrink-0">
                         {[0.5, 1.0, 2.0, 3.0].map((p) => (
                           <button
@@ -281,7 +370,7 @@ export const TradingPanel: React.FC = () => {
                             onClick={() => updateRiskSettings({ riskPercent: p })}
                             className={`px-2 py-1 text-[10px] font-mono rounded border transition-colors ${
                               riskSettings.riskPercent === p
-                                ? 'border-tv-blue bg-tv-blue/20 text-tv-blue'
+                                ? 'border-tv-blue bg-tv-blue/20 text-tv-blue font-bold'
                                 : 'border-[#2a2e39] text-tv-textMuted hover:text-white'
                             }`}
                           >
@@ -333,6 +422,10 @@ export const TradingPanel: React.FC = () => {
                     />
                   </div>
                 </div>
+
+                <div className="text-[10px] text-tv-textMuted italic">
+                  💡 На графике можно перетаскивать уровни SL и TP мышкой за ярлыки!
+                </div>
               </div>
 
               {/* Column 2: Auto-calculated position details */}
@@ -373,7 +466,7 @@ export const TradingPanel: React.FC = () => {
                 </div>
 
                 <div className="text-[11px] text-tv-textMuted mt-2 pt-2 border-t border-[#2a2e39] flex items-center justify-between">
-                  <span>При сработке SL убыток составит:</span>
+                  <span>При срабатывании SL убыток:</span>
                   <span className="text-tv-red font-mono font-semibold">-${riskCalc.riskUsd}</span>
                 </div>
               </div>
@@ -381,33 +474,55 @@ export const TradingPanel: React.FC = () => {
               {/* Column 3: Order Execution Buttons */}
               <div className="md:col-span-3 flex flex-col justify-between gap-2 bg-[#131722] p-3.5 rounded-xl border border-[#2a2e39]">
                 <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider">
-                  Исполнение ордера
+                  {orderType === 'market' ? 'Рыночное исполнение' : 'Выставление лимитки'}
                 </div>
 
                 <div className="space-y-2">
                   <button
-                    onClick={() => { setTradeSide('long'); handleOpenTrade('long'); }}
-                    className="w-full py-2.5 px-4 bg-tv-green hover:bg-tv-greenHover text-white font-semibold text-xs rounded-xl shadow-lg shadow-tv-green/20 transition-all flex items-center justify-between"
+                    onClick={() => {
+                      setTradeSide('long');
+                      if (orderType === 'market') {
+                        handleOpenMarketTrade('long');
+                      } else {
+                        handlePlaceLimitOrder('long');
+                      }
+                    }}
+                    className={`w-full py-2.5 px-4 text-white font-semibold text-xs rounded-xl shadow-lg transition-all flex items-center justify-between ${
+                      orderType === 'market'
+                        ? 'bg-tv-green hover:bg-tv-greenHover shadow-tv-green/20'
+                        : 'bg-[#089981] hover:bg-[#067a67] border border-white/20'
+                    }`}
                   >
                     <span className="flex items-center gap-1.5">
                       <TrendingUp className="w-4 h-4" />
-                      КУПИТЬ / LONG
+                      {orderType === 'market' ? 'КУПИТЬ / LONG' : 'LIMIT LONG'}
                     </span>
                     <span className="font-mono text-[11px] opacity-90">
-                      ${formatPrice(currentPrice, 1)}
+                      ${formatPrice(effectiveEntryPrice, 1)}
                     </span>
                   </button>
 
                   <button
-                    onClick={() => { setTradeSide('short'); handleOpenTrade('short'); }}
-                    className="w-full py-2.5 px-4 bg-tv-red hover:bg-tv-redHover text-white font-semibold text-xs rounded-xl shadow-lg shadow-tv-red/20 transition-all flex items-center justify-between"
+                    onClick={() => {
+                      setTradeSide('short');
+                      if (orderType === 'market') {
+                        handleOpenMarketTrade('short');
+                      } else {
+                        handlePlaceLimitOrder('short');
+                      }
+                    }}
+                    className={`w-full py-2.5 px-4 text-white font-semibold text-xs rounded-xl shadow-lg transition-all flex items-center justify-between ${
+                      orderType === 'market'
+                        ? 'bg-tv-red hover:bg-tv-redHover shadow-tv-red/20'
+                        : 'bg-[#d32635] hover:bg-[#b01e2b] border border-white/20'
+                    }`}
                   >
                     <span className="flex items-center gap-1.5">
                       <TrendingDown className="w-4 h-4" />
-                      ПРОДАТЬ / SHORT
+                      {orderType === 'market' ? 'ПРОДАТЬ / SHORT' : 'LIMIT SHORT'}
                     </span>
                     <span className="font-mono text-[11px] opacity-90">
-                      ${formatPrice(currentPrice, 1)}
+                      ${formatPrice(effectiveEntryPrice, 1)}
                     </span>
                   </button>
                 </div>
@@ -446,14 +561,14 @@ export const TradingPanel: React.FC = () => {
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
                     <div>
-                      <span className="text-tv-textMuted block text-[10px]">Stop Loss:</span>
+                      <span className="text-tv-textMuted block text-[10px]">Stop Loss (перетаскиваемый):</span>
                       <span className="text-tv-red font-semibold">
                         ${activePosition.stopLoss ? formatPrice(activePosition.stopLoss) : '—'}
                       </span>
                     </div>
 
                     <div>
-                      <span className="text-tv-textMuted block text-[10px]">Take Profit:</span>
+                      <span className="text-tv-textMuted block text-[10px]">Take Profit (перетаскиваемый):</span>
                       <span className="text-tv-green font-semibold">
                         ${activePosition.takeProfit ? formatPrice(activePosition.takeProfit) : '—'}
                       </span>
@@ -487,13 +602,91 @@ export const TradingPanel: React.FC = () => {
                 </div>
               ) : (
                 <div className="text-center py-8 text-xs text-tv-textMuted">
-                  Нет открытых позиций. Откройте Long или Short в калькуляторе риска.
+                  Нет открытых позиций. Откройте Market или выставьте Limit в первой вкладке.
                 </div>
               )}
             </div>
           )}
 
-          {/* TAB 3: TRADES HISTORY */}
+          {/* TAB 3: PENDING LIMIT ORDERS */}
+          {activeTab === 'orders' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-tv-textMuted">
+                  Отложенные лимитные ордера: {limitOrders.length}
+                </span>
+                <span className="text-[11px] text-tv-textMuted">
+                  💡 При движении свечей в симуляторе ордер сработает при касании цены!
+                </span>
+              </div>
+
+              {limitOrders.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="bg-[#131722] text-tv-textMuted text-[10px] uppercase border-b border-[#2a2e39]">
+                      <tr>
+                        <th className="py-2 px-3">Тип</th>
+                        <th className="py-2 px-3">Лимитная цена</th>
+                        <th className="py-2 px-3">Объем</th>
+                        <th className="py-2 px-3">Stop Loss</th>
+                        <th className="py-2 px-3">Take Profit</th>
+                        <th className="py-2 px-3">Риск USD</th>
+                        <th className="py-2 px-3">Время выставления</th>
+                        <th className="py-2 px-3 text-right">Действие</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#2a2e39]/50">
+                      {limitOrders.map((o) => (
+                        <tr key={o.id} className="hover:bg-[#131722]/60 transition-colors">
+                          <td className="py-2 px-3 font-semibold">
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                o.side === 'long'
+                                  ? 'bg-[#089981]/20 text-[#089981]'
+                                  : 'bg-[#f23645]/20 text-[#f23645]'
+                              }`}
+                            >
+                              LIMIT {o.side.toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-[#f7a600] font-bold">
+                            ${formatPrice(o.limitPrice)}
+                          </td>
+                          <td className="py-2 px-3 text-white">{o.size} BTC</td>
+                          <td className="py-2 px-3 text-tv-red">
+                            ${o.stopLoss ? formatPrice(o.stopLoss) : '—'}
+                          </td>
+                          <td className="py-2 px-3 text-tv-green">
+                            ${o.takeProfit ? formatPrice(o.takeProfit) : '—'}
+                          </td>
+                          <td className="py-2 px-3 text-tv-yellow font-semibold">
+                            ${o.riskUsd}
+                          </td>
+                          <td className="py-2 px-3 text-tv-textMuted">
+                            {formatDateTime(o.createdTime)}
+                          </td>
+                          <td className="py-2 px-3 text-right">
+                            <button
+                              onClick={() => cancelLimitOrder(o.id)}
+                              className="px-2.5 py-1 bg-tv-red/10 hover:bg-tv-red text-tv-red hover:text-white rounded-lg transition-colors text-[11px] font-sans font-medium"
+                            >
+                              Отменить
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-xs text-tv-textMuted">
+                  Нет активных лимитных ордеров. Выберите «Лимитный (Limit)» в первой вкладке.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 4: TRADES HISTORY */}
           {activeTab === 'history' && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -590,7 +783,7 @@ export const TradingPanel: React.FC = () => {
             </div>
           )}
 
-          {/* TAB 4: METRICS & ANALYTICS */}
+          {/* TAB 5: METRICS & ANALYTICS */}
           {activeTab === 'metrics' && (
             <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
               <div className="p-3 bg-[#131722] rounded-xl border border-[#2a2e39]">

@@ -1,4 +1,5 @@
 import { Candle, Timeframe } from '../types/chart';
+import { SupportedSymbol, SUPPORTED_SYMBOLS } from '../types/session';
 import { get, set } from 'idb-keyval';
 
 const GATEIO_INTERVAL_MAP: Record<Timeframe, string> = {
@@ -27,8 +28,13 @@ const OKX_BAR_MAP: Record<Timeframe, string> = {
   '1w': '1W',
 };
 
-// In-memory candle cache
-const memoryCache: Partial<Record<Timeframe, Candle[]>> = {};
+// In-memory candle cache keyed by `${symbol}_${timeframe}`
+const memoryCache: Record<string, Candle[]> = {};
+
+function getCacheKey(symbol: string, timeframe: Timeframe): string {
+  const norm = symbol.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  return `${norm}_${timeframe}`;
+}
 
 /**
  * Normalizes and removes duplicate timestamps, sorting chronologically
@@ -44,19 +50,17 @@ export function sanitizeCandles(candles: Candle[]): Candle[] {
 }
 
 /**
- * Loads seed data from public/data/seed.json
+ * Loads seed data from public/data/seed.json (for BTC fallback)
  */
 export async function loadSeedData(): Promise<Record<string, Candle[]>> {
   try {
     const res = await fetch('/data/seed.json');
     if (!res.ok) {
-      console.warn('Seed data response not OK:', res.status);
       return {};
     }
     const data = await res.json();
     return data;
   } catch (err) {
-    console.warn('Failed to load local seed data:', err);
     return {};
   }
 }
@@ -65,13 +69,14 @@ export async function loadSeedData(): Promise<Record<string, Candle[]>> {
  * Fetches candles from OKX public history-candles API (supports deep 2024/2023 history with CORS)
  */
 export async function fetchOKXCandlesAround(
+  symbol: SupportedSymbol = 'BTCUSDT.P',
   timeframe: Timeframe,
   targetTimestampSeconds: number,
   targetCount: number = 300
 ): Promise<Candle[]> {
+  const instId = SUPPORTED_SYMBOLS[symbol]?.okxInstId || 'BTC-USDT-SWAP';
   const bar = OKX_BAR_MAP[timeframe] || '1H';
   const stepSec = getIntervalSeconds(timeframe);
-  // OKX 'after' parameter returns candles older than the specified timestamp
   let currAfterMs = Math.floor((targetTimestampSeconds + 60 * stepSec) * 1000);
   const result: Candle[] = [];
 
@@ -79,7 +84,7 @@ export async function fetchOKXCandlesAround(
 
   for (let b = 0; b < maxBatches; b++) {
     try {
-      const url = `https://www.okx.com/api/v5/market/history-candles?instId=BTC-USDT-SWAP&bar=${bar}&limit=100&after=${currAfterMs}`;
+      const url = `https://www.okx.com/api/v5/market/history-candles?instId=${instId}&bar=${bar}&limit=100&after=${currAfterMs}`;
       const response = await fetch(url);
       if (!response.ok) break;
       const json = await response.json();
@@ -97,11 +102,10 @@ export async function fetchOKXCandlesAround(
         });
       }
 
-      // Prepare for next older batch
       currAfterMs = Number(rows[rows.length - 1][0]);
       if (result.length >= targetCount) break;
     } catch (err) {
-      console.warn(`OKX batch ${b} error:`, err);
+      console.warn(`OKX batch ${b} error for ${symbol}:`, err);
       break;
     }
   }
@@ -110,16 +114,18 @@ export async function fetchOKXCandlesAround(
 }
 
 /**
- * Fetches candles from Gate.io Futures API for BTCUSDT (best for recent history)
+ * Fetches candles from Gate.io Futures API (best for recent history)
  */
 export async function fetchGateIOCandles(
+  symbol: SupportedSymbol = 'BTCUSDT.P',
   timeframe: Timeframe,
   toTimestamp?: number,
   limit: number = 1000
 ): Promise<Candle[]> {
+  const contract = SUPPORTED_SYMBOLS[symbol]?.gateContract || 'BTC_USDT';
   const gateInterval = GATEIO_INTERVAL_MAP[timeframe] || '1h';
   const url = new URL('https://api.gateio.ws/api/v4/futures/usdt/candlesticks');
-  url.searchParams.set('contract', 'BTC_USDT');
+  url.searchParams.set('contract', contract);
   url.searchParams.set('interval', gateInterval);
   url.searchParams.set('limit', String(limit));
   if (toTimestamp) {
@@ -166,17 +172,22 @@ function candlesContainTime(candles: Candle[], targetTs: number, timeframe: Time
 /**
  * Quick fetch of the latest candles for real-time polling
  */
-export async function fetchLatestCandles(timeframe: Timeframe, limit: number = 3): Promise<Candle[]> {
+export async function fetchLatestCandles(
+  symbol: SupportedSymbol = 'BTCUSDT.P',
+  timeframe: Timeframe,
+  limit: number = 3
+): Promise<Candle[]> {
   try {
-    const fresh = await fetchGateIOCandles(timeframe, undefined, limit);
+    const fresh = await fetchGateIOCandles(symbol, timeframe, undefined, limit);
     if (fresh.length > 0) return fresh;
   } catch {
     // Gate.io error, try OKX
   }
 
   try {
+    const instId = SUPPORTED_SYMBOLS[symbol]?.okxInstId || 'BTC-USDT-SWAP';
     const bar = OKX_BAR_MAP[timeframe] || '1H';
-    const okxUrl = `https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=${bar}&limit=${limit}`;
+    const okxUrl = `https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=${bar}&limit=${limit}`;
     const res = await fetch(okxUrl);
     if (res.ok) {
       const json = await res.json();
@@ -200,16 +211,17 @@ export async function fetchLatestCandles(timeframe: Timeframe, limit: number = 3
 }
 
 /**
- * Primary function to get candles for a timeframe.
+ * Primary function to get candles for a symbol and timeframe.
  * In Live Mode (!targetTimestamp): ALWAYS fetches fresh live candles from Gate.io/OKX
  * and merges with existing historical cache so the user sees real-time market data.
  * In Replay Mode (targetTimestamp is set): Checks memory/IDB cache first, then fetches historical range.
  */
 export async function getCandlesForTimeframe(
+  symbol: SupportedSymbol = 'BTCUSDT.P',
   timeframe: Timeframe,
   options?: { targetTimestamp?: number | null; forceFetch?: boolean }
 ): Promise<Candle[]> {
-  const cacheKey = `btcusdt_p_${timeframe}`;
+  const cacheKey = getCacheKey(symbol, timeframe);
   const targetTs = options?.targetTimestamp;
   const now = Math.floor(Date.now() / 1000);
   const tfSec = getIntervalSeconds(timeframe);
@@ -218,74 +230,76 @@ export async function getCandlesForTimeframe(
   // 1. REPLAY MODE (targetTimestamp specified by user)
   // =========================================================================
   if (targetTs) {
-    // Check if memory cache covers targetTs
-    if (memoryCache[timeframe] && candlesContainTime(memoryCache[timeframe]!, targetTs, timeframe)) {
-      return memoryCache[timeframe]!;
+    // Check memory cache
+    if (memoryCache[cacheKey] && candlesContainTime(memoryCache[cacheKey], targetTs, timeframe)) {
+      return memoryCache[cacheKey];
     }
 
     // Check IndexedDB
     try {
       const cachedDb = await get<Candle[]>(cacheKey);
       if (cachedDb && cachedDb.length > 50 && candlesContainTime(cachedDb, targetTs, timeframe)) {
-        memoryCache[timeframe] = cachedDb;
+        memoryCache[cacheKey] = cachedDb;
         return cachedDb;
       }
     } catch (e) {
       console.warn('IndexedDB read error:', e);
     }
 
-    // If target is deep history (> 25 days ago), use OKX history candles
+    // Deep history (> 25 days ago) via OKX
     if (now - targetTs > 25 * 86400) {
       try {
-        const okxCandles = await fetchOKXCandlesAround(timeframe, targetTs, 350);
+        const okxCandles = await fetchOKXCandlesAround(symbol, timeframe, targetTs, 350);
         if (okxCandles.length > 0) {
-          const existing = memoryCache[timeframe] || [];
+          const existing = memoryCache[cacheKey] || [];
           const merged = sanitizeCandles([...existing, ...okxCandles]);
-          memoryCache[timeframe] = merged;
+          memoryCache[cacheKey] = merged;
           set(cacheKey, merged).catch(console.warn);
           return merged;
         }
       } catch (err) {
-        console.warn('OKX historical fetch error:', err);
+        console.warn(`OKX historical fetch error for ${symbol}:`, err);
       }
     }
 
-    // Try Gate.io with buffer
+    // Gate.io replay fetch with buffer
     try {
       const buffer = tfSec * 200;
-      const gateData = await fetchGateIOCandles(timeframe, targetTs + buffer, 1000);
+      const gateData = await fetchGateIOCandles(symbol, timeframe, targetTs + buffer, 1000);
       if (gateData.length > 0 && candlesContainTime(gateData, targetTs, timeframe)) {
-        const existing = memoryCache[timeframe] || [];
+        const existing = memoryCache[cacheKey] || [];
         const merged = sanitizeCandles([...existing, ...gateData]);
-        memoryCache[timeframe] = merged;
+        memoryCache[cacheKey] = merged;
         set(cacheKey, merged).catch(console.warn);
         return merged;
       }
     } catch (err) {
-      console.warn('Gate.io replay fetch error:', err);
+      console.warn(`Gate.io replay fetch error for ${symbol}:`, err);
     }
 
-    // Try Seed Data
-    try {
-      const seed = await loadSeedData();
-      if (seed[timeframe] && seed[timeframe].length > 0) {
-        const sanitized = sanitizeCandles(seed[timeframe]);
-        if (candlesContainTime(sanitized, targetTs, timeframe)) {
-          memoryCache[timeframe] = sanitized;
-          return sanitized;
+    // Seed data fallback (for BTC)
+    if (symbol === 'BTCUSDT.P') {
+      try {
+        const seed = await loadSeedData();
+        if (seed[timeframe] && seed[timeframe].length > 0) {
+          const sanitized = sanitizeCandles(seed[timeframe]);
+          if (candlesContainTime(sanitized, targetTs, timeframe)) {
+            memoryCache[cacheKey] = sanitized;
+            return sanitized;
+          }
         }
+      } catch (e) {
+        console.warn('Seed fallback error:', e);
       }
-    } catch (e) {
-      console.warn('Seed fallback error:', e);
     }
 
-    return generateFallbackCandles(timeframe, targetTs);
+    return generateFallbackCandles(symbol, timeframe, targetTs);
   }
 
   // =========================================================================
   // 2. LIVE MODE (no targetTimestamp): ALWAYS PREFER FRESH REAL-TIME DATA!
   // =========================================================================
-  let existingDb: Candle[] = memoryCache[timeframe] || [];
+  let existingDb: Candle[] = memoryCache[cacheKey] || [];
   if (existingDb.length === 0) {
     try {
       const cached = await get<Candle[]>(cacheKey);
@@ -298,30 +312,30 @@ export async function getCandlesForTimeframe(
   }
 
   const lastCandleTime = existingDb.length > 0 ? existingDb[existingDb.length - 1].time : 0;
-  // If existing cached data is already very fresh (less than 90s old or less than tfSec), reuse
   const isCacheStillFresh = existingDb.length > 50 && (now - lastCandleTime) < Math.min(tfSec, 90);
   if (isCacheStillFresh && !options?.forceFetch) {
-    memoryCache[timeframe] = existingDb;
+    memoryCache[cacheKey] = existingDb;
     return existingDb;
   }
 
   // 2a. Fetch fresh candles from Gate.io (primary, up to 1000 candles)
   try {
-    const fresh = await fetchGateIOCandles(timeframe, undefined, 1000);
+    const fresh = await fetchGateIOCandles(symbol, timeframe, undefined, 1000);
     if (fresh.length > 0) {
       const merged = sanitizeCandles([...existingDb, ...fresh]);
-      memoryCache[timeframe] = merged;
+      memoryCache[cacheKey] = merged;
       set(cacheKey, merged).catch(console.warn);
       return merged;
     }
   } catch (err) {
-    console.warn('Gate.io live fetch failed, trying OKX live fallback:', err);
+    console.warn(`Gate.io live fetch failed for ${symbol}, trying OKX fallback:`, err);
   }
 
   // 2b. Fallback to OKX live candles
   try {
+    const instId = SUPPORTED_SYMBOLS[symbol]?.okxInstId || 'BTC-USDT-SWAP';
     const bar = OKX_BAR_MAP[timeframe] || '1H';
-    const okxUrl = `https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=${bar}&limit=300`;
+    const okxUrl = `https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=${bar}&limit=300`;
     const res = await fetch(okxUrl);
     if (res.ok) {
       const json = await res.json();
@@ -336,65 +350,67 @@ export async function getCandlesForTimeframe(
       }));
       if (okxCandles.length > 0) {
         const merged = sanitizeCandles([...existingDb, ...okxCandles]);
-        memoryCache[timeframe] = merged;
+        memoryCache[cacheKey] = merged;
         set(cacheKey, merged).catch(console.warn);
         return merged;
       }
     }
   } catch (err) {
-    console.warn('OKX live fallback failed:', err);
+    console.warn(`OKX live fallback failed for ${symbol}:`, err);
   }
 
   // 2c. If network failed, return existing cached data if available
   if (existingDb.length > 0) {
-    memoryCache[timeframe] = existingDb;
+    memoryCache[cacheKey] = existingDb;
     return existingDb;
   }
 
-  // 2d. Try seed data
-  try {
-    const seed = await loadSeedData();
-    if (seed[timeframe] && seed[timeframe].length > 0) {
-      const sanitized = sanitizeCandles(seed[timeframe]);
-      memoryCache[timeframe] = sanitized;
-      return sanitized;
+  // 2d. Try seed data (for BTC)
+  if (symbol === 'BTCUSDT.P') {
+    try {
+      const seed = await loadSeedData();
+      if (seed[timeframe] && seed[timeframe].length > 0) {
+        const sanitized = sanitizeCandles(seed[timeframe]);
+        memoryCache[cacheKey] = sanitized;
+        return sanitized;
+      }
+    } catch (e) {
+      console.warn('Seed data fallback error:', e);
     }
-  } catch (e) {
-    console.warn('Seed data fallback error:', e);
   }
 
-  return generateFallbackCandles(timeframe);
+  return generateFallbackCandles(symbol, timeframe);
 }
 
 /**
  * Fetch historical range around a target date (e.g. 1-2 years ago)
  */
 export async function fetchHistoricalDateRange(
+  symbol: SupportedSymbol = 'BTCUSDT.P',
   timeframe: Timeframe,
   targetTimestampSeconds: number
 ): Promise<Candle[]> {
   try {
-    // For deep dates (> 25 days ago), use OKX history candles
     const now = Math.floor(Date.now() / 1000);
     let fresh: Candle[] = [];
 
     if (now - targetTimestampSeconds > 25 * 86400) {
-      fresh = await fetchOKXCandlesAround(timeframe, targetTimestampSeconds, 400);
+      fresh = await fetchOKXCandlesAround(symbol, timeframe, targetTimestampSeconds, 400);
     } else {
       const buffer = getIntervalSeconds(timeframe) * 200;
-      fresh = await fetchGateIOCandles(timeframe, targetTimestampSeconds + buffer, 1000);
+      fresh = await fetchGateIOCandles(symbol, timeframe, targetTimestampSeconds + buffer, 1000);
     }
     
-    // Merge with existing
-    const existing = memoryCache[timeframe] || [];
+    const cacheKey = getCacheKey(symbol, timeframe);
+    const existing = memoryCache[cacheKey] || [];
     const merged = sanitizeCandles([...existing, ...fresh]);
-    memoryCache[timeframe] = merged;
-    const cacheKey = `btcusdt_p_${timeframe}`;
+    memoryCache[cacheKey] = merged;
     await set(cacheKey, merged).catch(console.warn);
     return merged;
   } catch (err) {
-    console.error('Failed to fetch historical range:', err);
-    return memoryCache[timeframe] || [];
+    console.error(`Failed to fetch historical range for ${symbol}:`, err);
+    const cacheKey = getCacheKey(symbol, timeframe);
+    return memoryCache[cacheKey] || [];
   }
 }
 
@@ -415,14 +431,19 @@ export function getIntervalSeconds(timeframe: Timeframe): number {
 }
 
 /**
- * Fallback generator in case of complete network isolation
+ * Fallback generator in case of network isolation
  */
-function generateFallbackCandles(timeframe: Timeframe, centerTimestamp?: number, count = 500): Candle[] {
+function generateFallbackCandles(
+  symbol: SupportedSymbol = 'BTCUSDT.P',
+  timeframe: Timeframe,
+  centerTimestamp?: number,
+  count = 500
+): Candle[] {
   const step = getIntervalSeconds(timeframe);
   const now = centerTimestamp || Math.floor(Date.now() / 1000);
   const startTime = now - Math.floor(count * 0.7) * step;
   const candles: Candle[] = [];
-  let price = 65000;
+  let price = SUPPORTED_SYMBOLS[symbol]?.defaultPrice || 65000;
 
   for (let i = 0; i < count; i++) {
     const time = startTime + i * step;

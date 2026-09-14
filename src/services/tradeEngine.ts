@@ -1,5 +1,6 @@
 import { Candle, PropFirmFeeSettings } from '../types/chart';
 import { BacktestMetrics, ClosedTrade, Position, PositionSide, RiskSettings } from '../types/trading';
+import { PropFirmRuleSettings, PropFirmStatus } from '../types/session';
 
 export const DEFAULT_PROP_FIRM_SETTINGS: PropFirmFeeSettings = {
   presetName: 'funding_pips',
@@ -52,19 +53,23 @@ export const PROP_FIRM_PRESETS: Record<string, PropFirmFeeSettings> = {
 
 /**
  * MetaTrader style Risk Calculator:
- * Calculates required position size (BTC) given account balance, risk %, entry, and SL.
+ * Calculates required position size given account balance, risk %, entry, and SL.
  */
 export function calculateRiskPosition(
   balance: number,
   riskSettings: RiskSettings,
   entryPrice: number,
   stopLossPrice: number,
-  takeProfitPrice?: number
+  takeProfitPrice?: number,
+  lotPrecision: number = 3,
+  baseAsset: string = 'BTC'
 ): {
   riskUsd: number;
   stopDistance: number;
   stopDistancePercent: number;
-  sizeBtc: number;
+  sizeBtc: number; // alias for backward compatibility
+  sizeAsset: number;
+  baseAsset: string;
   notionalUsdt: number;
   potentialProfitUsd: number;
   riskRewardRatio: number;
@@ -77,6 +82,8 @@ export function calculateRiskPosition(
       stopDistance: 0,
       stopDistancePercent: 0,
       sizeBtc: 0,
+      sizeAsset: 0,
+      baseAsset,
       notionalUsdt: 0,
       potentialProfitUsd: 0,
       riskRewardRatio: 0,
@@ -92,6 +99,8 @@ export function calculateRiskPosition(
       stopDistance: 0,
       stopDistancePercent: 0,
       sizeBtc: 0,
+      sizeAsset: 0,
+      baseAsset,
       notionalUsdt: 0,
       potentialProfitUsd: 0,
       riskRewardRatio: 0,
@@ -106,15 +115,16 @@ export function calculateRiskPosition(
     : riskSettings.riskUsd;
 
   // Formula: Size = Risk $ / Stop Distance
-  const sizeBtc = Number((riskUsd / stopDistance).toFixed(4));
-  const notionalUsdt = Number((sizeBtc * entryPrice).toFixed(2));
+  const rawSize = riskUsd / stopDistance;
+  const sizeAsset = Number(rawSize.toFixed(lotPrecision));
+  const notionalUsdt = Number((sizeAsset * entryPrice).toFixed(2));
 
   let potentialProfitUsd = 0;
   let riskRewardRatio = 0;
 
   if (takeProfitPrice && takeProfitPrice > 0) {
     const tpDistance = Math.abs(takeProfitPrice - entryPrice);
-    potentialProfitUsd = Number((sizeBtc * tpDistance).toFixed(2));
+    potentialProfitUsd = Number((sizeAsset * tpDistance).toFixed(2));
     riskRewardRatio = Number((tpDistance / stopDistance).toFixed(2));
   }
 
@@ -122,11 +132,13 @@ export function calculateRiskPosition(
     riskUsd: Number(riskUsd.toFixed(2)),
     stopDistance: Number(stopDistance.toFixed(2)),
     stopDistancePercent: Number(stopDistancePercent.toFixed(2)),
-    sizeBtc,
+    sizeBtc: sizeAsset,
+    sizeAsset,
+    baseAsset,
     notionalUsdt,
     potentialProfitUsd,
     riskRewardRatio,
-    isValid: sizeBtc > 0,
+    isValid: sizeAsset > 0,
   };
 }
 
@@ -457,5 +469,108 @@ export function calculateMetrics(trades: ClosedTrade[], initialBalance: number):
     maxDrawdownPercent: Number(maxDrawdownPercent.toFixed(1)),
     totalCommissions: Number(totalCommissions.toFixed(2)),
     totalSwaps: Number(totalSwaps.toFixed(2)),
+  };
+}
+
+export interface PropFirmEvaluationResult {
+  dailyLossUsd: number;
+  dailyLossPercent: number;
+  dailyLimitUsd: number;
+  isDailyBreached: boolean;
+  
+  overallDrawdownUsd: number;
+  overallDrawdownPercent: number;
+  overallLimitUsd: number;
+  isOverallBreached: boolean;
+  
+  currentProfitUsd: number;
+  currentProfitPercent: number;
+  profitTargetUsd: number;
+  isTargetPassed: boolean;
+  
+  status: PropFirmStatus;
+  breachReason: string | null;
+}
+
+/**
+ * Evaluates account equity and daily performance against Prop Firm rules
+ */
+export function evaluatePropFirmRules(
+  initialBalance: number,
+  currentBalance: number,
+  dayStartBalance: number,
+  unrealizedPnl: number,
+  rules: PropFirmRuleSettings
+): PropFirmEvaluationResult {
+  const currentEquity = currentBalance + unrealizedPnl;
+  const currentProfitUsd = currentEquity - initialBalance;
+  const currentProfitPercent = initialBalance > 0 ? (currentProfitUsd / initialBalance) * 100 : 0;
+
+  if (!rules || !rules.enabled) {
+    return {
+      dailyLossUsd: 0,
+      dailyLossPercent: 0,
+      dailyLimitUsd: 0,
+      isDailyBreached: false,
+      overallDrawdownUsd: 0,
+      overallDrawdownPercent: 0,
+      overallLimitUsd: 0,
+      isOverallBreached: false,
+      currentProfitUsd: Number(currentProfitUsd.toFixed(2)),
+      currentProfitPercent: Number(currentProfitPercent.toFixed(2)),
+      profitTargetUsd: 0,
+      isTargetPassed: false,
+      status: 'in_progress',
+      breachReason: null,
+    };
+  }
+
+  // 1. Daily Drawdown
+  const dayBase = dayStartBalance > 0 ? dayStartBalance : initialBalance;
+  const dailyLimitUsd = dayBase * (rules.dailyLossLimitPercent / 100);
+  const dailyDiff = currentEquity - dayBase;
+  const dailyLossUsd = dailyDiff < 0 ? Math.abs(dailyDiff) : 0;
+  const dailyLossPercent = dayBase > 0 ? (dailyLossUsd / dayBase) * 100 : 0;
+  const isDailyBreached = dailyLossUsd >= dailyLimitUsd;
+
+  // 2. Overall Max Drawdown
+  const overallLimitUsd = initialBalance * (rules.overallLossLimitPercent / 100);
+  const overallDiff = currentEquity - initialBalance;
+  const overallDrawdownUsd = overallDiff < 0 ? Math.abs(overallDiff) : 0;
+  const overallDrawdownPercent = initialBalance > 0 ? (overallDrawdownUsd / initialBalance) * 100 : 0;
+  const isOverallBreached = overallDrawdownUsd >= overallLimitUsd;
+
+  // 3. Profit Target
+  const profitTargetUsd = initialBalance * (rules.profitTargetPercent / 100);
+  const isTargetPassed = currentProfitUsd >= profitTargetUsd && !isDailyBreached && !isOverallBreached;
+
+  let status: PropFirmStatus = 'in_progress';
+  let breachReason: string | null = null;
+
+  if (isDailyBreached) {
+    status = 'daily_breach';
+    breachReason = `Превышен дневной лимит потерь: -$${dailyLossUsd.toFixed(2)} при лимите -$${dailyLimitUsd.toFixed(2)} (${rules.dailyLossLimitPercent}%)`;
+  } else if (isOverallBreached) {
+    status = 'overall_breach';
+    breachReason = `Превышен максимальный лимит общей просадки: -$${overallDrawdownUsd.toFixed(2)} при лимите -$${overallLimitUsd.toFixed(2)} (${rules.overallLossLimitPercent}%)`;
+  } else if (isTargetPassed) {
+    status = 'passed';
+  }
+
+  return {
+    dailyLossUsd: Number(dailyLossUsd.toFixed(2)),
+    dailyLossPercent: Number(dailyLossPercent.toFixed(2)),
+    dailyLimitUsd: Number(dailyLimitUsd.toFixed(2)),
+    isDailyBreached,
+    overallDrawdownUsd: Number(overallDrawdownUsd.toFixed(2)),
+    overallDrawdownPercent: Number(overallDrawdownPercent.toFixed(2)),
+    overallLimitUsd: Number(overallLimitUsd.toFixed(2)),
+    isOverallBreached,
+    currentProfitUsd: Number(currentProfitUsd.toFixed(2)),
+    currentProfitPercent: Number(currentProfitPercent.toFixed(2)),
+    profitTargetUsd: Number(profitTargetUsd.toFixed(2)),
+    isTargetPassed,
+    status,
+    breachReason,
   };
 }

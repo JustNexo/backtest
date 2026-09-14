@@ -19,6 +19,14 @@ import {
   RiskSettings,
 } from '../types/trading';
 import {
+  SupportedSymbol,
+  SymbolInfo,
+  SUPPORTED_SYMBOLS,
+  BacktestSession,
+  PropFirmRuleSettings,
+  DEFAULT_PROP_FIRM_PRESETS,
+} from '../types/session';
+import {
   fetchHistoricalDateRange,
   fetchLatestCandles,
   getCandlesForTimeframe,
@@ -30,7 +38,9 @@ import {
   closePositionManually,
   DEFAULT_PROP_FIRM_SETTINGS,
   evaluatePositionWithCandle,
+  evaluatePropFirmRules,
   openPosition as engineOpenPosition,
+  PropFirmEvaluationResult,
 } from '../services/tradeEngine';
 import {
   DEFAULT_CANDLE_COLORS,
@@ -41,6 +51,12 @@ import {
   loadStoredRiskSettings,
   loadStoredThemeSettings,
   loadStoredTimezone,
+  loadStoredSymbol,
+  saveStoredSymbol,
+  loadStoredSessions,
+  saveStoredSessions,
+  loadStoredActiveSessionId,
+  saveStoredActiveSessionId,
   saveStoredCandleColors,
   saveStoredPropFirmSettings,
   saveStoredRiskSettings,
@@ -49,7 +65,9 @@ import {
 } from '../services/storage';
 
 interface ChartContextType {
-  symbol: string;
+  symbol: SupportedSymbol;
+  setSymbol: (s: SupportedSymbol) => void;
+  symbolInfo: SymbolInfo;
   timeframe: Timeframe;
   setTimeframe: (tf: Timeframe) => void;
   isLoading: boolean;
@@ -125,15 +143,65 @@ interface ChartContextType {
   // Pre-trade Order Setup (Draggable SL/TP before opening position)
   orderSetup: OrderSetupPreview;
   updateOrderSetup: (setup: Partial<OrderSetupPreview>) => void;
+
+  // Personal Cabinet & Session Manager (FX Replay style)
+  sessions: BacktestSession[];
+  activeSession: BacktestSession | null;
+  activeSessionId: string | null;
+  createSession: (params: {
+    name: string;
+    symbol: SupportedSymbol;
+    startDate: number;
+    endDate?: number | null;
+    initialBalance: number;
+    propFirm: PropFirmRuleSettings;
+  }) => Promise<void>;
+  loadSession: (sessionId: string) => Promise<void>;
+  resetSession: (sessionId: string) => Promise<void>;
+  deleteSession: (sessionId: string) => void;
+  updateSessionPropFirm: (rules: PropFirmRuleSettings) => void;
+
+  // Prop Firm Evaluation
+  propFirmRules: PropFirmRuleSettings;
+  updatePropFirmRules: (rules: Partial<PropFirmRuleSettings>) => void;
+  propFirmEvaluation: PropFirmEvaluationResult;
+
+  // Cabinet Modal Visibility
+  isCabinetOpen: boolean;
+  setIsCabinetOpen: (open: boolean) => void;
 }
 
 const ChartContext = createContext<ChartContextType | null>(null);
 
 export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const symbol = 'BTCUSDT.P';
+  // Symbol State
+  const [symbol, setSymbolState] = useState<SupportedSymbol>(() => {
+    const stored = loadStoredSymbol();
+    if (stored === 'ETHUSDT.P' || stored === 'SOLUSDT.P') return stored;
+    return 'BTCUSDT.P';
+  });
+
+  const symbolInfo = useMemo(() => {
+    return SUPPORTED_SYMBOLS[symbol] || SUPPORTED_SYMBOLS['BTCUSDT.P'];
+  }, [symbol]);
+
+  const setSymbol = useCallback((newSym: SupportedSymbol) => {
+    setSymbolState(newSym);
+    saveStoredSymbol(newSym);
+  }, []);
+
   const [timeframe, setTimeframe] = useState<Timeframe>('1h');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [allCandles, setAllCandles] = useState<Candle[]>([]);
+
+  // Cabinet & Sessions State
+  const [sessions, setSessions] = useState<BacktestSession[]>(() => loadStoredSessions());
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => loadStoredActiveSessionId());
+  const [isCabinetOpen, setIsCabinetOpen] = useState<boolean>(false);
+
+  const activeSession = useMemo(() => {
+    return sessions.find((s) => s.id === activeSessionId) || null;
+  }, [sessions, activeSessionId]);
 
   // Replay State
   const [replay, setReplay] = useState<ReplayState>({
@@ -142,7 +210,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     currentCutTime: null,
     currentIndex: -1,
     isPlaying: false,
-    playbackSpeed: 500, // 500ms per candle default
+    playbackSpeed: 500,
   });
 
   // Settings State
@@ -151,12 +219,24 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [feeSettings, setFeeSettings] = useState<PropFirmFeeSettings>(loadStoredPropFirmSettings);
 
   // Trading & Paper Backtest State
-  const initialBalance = 10000;
-  const [balance, setBalance] = useState<number>(initialBalance);
-  const [activePosition, setActivePosition] = useState<Position | null>(null);
-  const [limitOrders, setLimitOrders] = useState<LimitOrder[]>([]);
-  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
+  const [initialBalance, setInitialBalance] = useState<number>(() => activeSession?.initialBalance || 100000);
+  const [balance, setBalance] = useState<number>(() => activeSession?.currentBalance || 100000);
+  const [activePosition, setActivePosition] = useState<Position | null>(() => activeSession?.activePosition || null);
+  const [limitOrders, setLimitOrders] = useState<LimitOrder[]>(() => activeSession?.limitOrders || []);
+  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>(() => activeSession?.trades || []);
   const [riskSettings, setRiskSettings] = useState<RiskSettings>(loadStoredRiskSettings);
+
+  // Prop Firm Rules & Tracking
+  const [propFirmRules, setPropFirmRules] = useState<PropFirmRuleSettings>(() => {
+    if (activeSession?.propFirm) return activeSession.propFirm;
+    return {
+      enabled: true,
+      ...DEFAULT_PROP_FIRM_PRESETS.funding_pips,
+    };
+  });
+
+  const [dayStartBalance, setDayStartBalance] = useState<number>(() => activeSession?.dayStartBalance || initialBalance);
+  const [dayStartTime, setDayStartTime] = useState<number>(() => activeSession?.dayStartTime || Math.floor(Date.now() / 1000));
 
   // Drawings
   const [activeTool, setActiveTool] = useState<DrawingTool>('cursor');
@@ -173,14 +253,14 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     saveStoredTimezone(tz);
   }, []);
 
-  // Pre-trade Order Setup (Draggable SL/TP on chart before opening position)
+  // Pre-trade Order Setup
   const [orderSetup, setOrderSetup] = useState<OrderSetupPreview>({
     enabled: false,
     side: 'long',
     orderType: 'market',
-    entryPrice: 65000,
-    stopLoss: 64500,
-    takeProfit: 66500,
+    entryPrice: symbolInfo.defaultPrice,
+    stopLoss: Number((symbolInfo.defaultPrice * 0.992).toFixed(symbolInfo.pricePrecision)),
+    takeProfit: Number((symbolInfo.defaultPrice * 1.016).toFixed(symbolInfo.pricePrecision)),
   });
 
   const updateOrderSetup = useCallback((setup: Partial<OrderSetupPreview>) => {
@@ -190,20 +270,19 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Timer ref for playback
   const playIntervalRef = useRef<number | null>(null);
 
-  // Load candles when timeframe changes (keeping replay cut timestamp in sync!)
+  // Load candles when symbol or timeframe changes
   useEffect(() => {
     let isMounted = true;
     setIsLoading(true);
 
     const targetTs = replay.isActive && replay.currentCutTime ? replay.currentCutTime : null;
 
-    getCandlesForTimeframe(timeframe, { targetTimestamp: targetTs })
+    getCandlesForTimeframe(symbol, timeframe, { targetTimestamp: targetTs })
       .then((data) => {
         if (!isMounted) return;
         setAllCandles(data);
         setIsLoading(false);
 
-        // If in replay mode, adjust currentIndex to match currentCutTime
         setReplay((prev) => {
           if (!prev.isActive || prev.currentCutTime === null) {
             return {
@@ -212,7 +291,6 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             };
           }
 
-          // Find the last candle whose time is <= prev.currentCutTime
           let idx = -1;
           for (let i = 0; i < data.length; i++) {
             if (data[i].time <= prev.currentCutTime!) {
@@ -231,14 +309,14 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         });
       })
       .catch((err) => {
-        console.error('Error loading candles:', err);
+        console.error(`Error loading candles for ${symbol}:`, err);
         if (isMounted) setIsLoading(false);
       });
 
     return () => {
       isMounted = false;
     };
-  }, [timeframe]); // depends on timeframe
+  }, [symbol, timeframe]);
 
   // Sliced visible candles
   const visibleCandles = useMemo(() => {
@@ -253,24 +331,26 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return visibleCandles[visibleCandles.length - 1];
   }, [visibleCandles]);
 
-  // Keep orderSetup entryPrice and levels reasonable when candle or timeframe changes
+  // Keep orderSetup entryPrice and levels reasonable when candle changes
   useEffect(() => {
     if (!currentCandle) return;
     const curPrice = currentCandle.close;
     setOrderSetup((prev) => {
-      // If major discrepancy (> 15% distance, e.g. switched timeframe to 2024 or initial load)
       const diffRatio = Math.abs(curPrice - prev.entryPrice) / (curPrice || 1);
-      if (diffRatio > 0.15 || prev.entryPrice === 65000) {
+      if (diffRatio > 0.15 || prev.entryPrice === 65000 || prev.entryPrice === 78000) {
         const slDist = Math.round(curPrice * 0.008 * 10) / 10;
         const tpDist = Math.round(slDist * 2 * 10) / 10;
         return {
           ...prev,
           entryPrice: curPrice,
-          stopLoss: prev.side === 'long' ? Math.round((curPrice - slDist) * 10) / 10 : Math.round((curPrice + slDist) * 10) / 10,
-          takeProfit: prev.side === 'long' ? Math.round((curPrice + tpDist) * 10) / 10 : Math.round((curPrice - tpDist) * 10) / 10,
+          stopLoss: prev.side === 'long'
+            ? Number((curPrice - slDist).toFixed(symbolInfo.pricePrecision))
+            : Number((curPrice + slDist).toFixed(symbolInfo.pricePrecision)),
+          takeProfit: prev.side === 'long'
+            ? Number((curPrice + tpDist).toFixed(symbolInfo.pricePrecision))
+            : Number((curPrice - tpDist).toFixed(symbolInfo.pricePrecision)),
         };
       }
-      // If market order, entry price tracks current candle close
       if (prev.orderType === 'market' && prev.entryPrice !== curPrice) {
         return {
           ...prev,
@@ -279,12 +359,20 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
       return prev;
     });
-  }, [currentCandle?.close]);
+  }, [currentCandle?.close, symbolInfo.pricePrecision]);
 
-  // Evaluate limit orders and active position when new candle appears (in replay or forward step)
+  // Evaluate limit orders and active position when new candle appears
   const processCandleTick = useCallback(
     (candle: Candle) => {
-      // 1. Check Pending Limit Orders
+      // 1. Check day rollover for prop firm daily tracking (00:00 UTC)
+      const candleDay = new Date(candle.time * 1000).getUTCDate();
+      const lastDay = dayStartTime ? new Date(dayStartTime * 1000).getUTCDate() : null;
+      if (lastDay !== null && candleDay !== lastDay) {
+        setDayStartBalance(balance);
+        setDayStartTime(candle.time);
+      }
+
+      // 2. Check Pending Limit Orders
       setLimitOrders((prevOrders) => {
         const remaining: LimitOrder[] = [];
         for (const order of prevOrders) {
@@ -296,7 +384,6 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
 
           if (triggered) {
-            // Fill limit order
             const newPos = engineOpenPosition(
               order.side,
               order.limitPrice,
@@ -314,7 +401,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return remaining;
       });
 
-      // 2. Check Active Position
+      // 3. Check Active Position
       setActivePosition((pos) => {
         if (!pos) return null;
 
@@ -330,7 +417,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return pos;
       });
     },
-    [feeSettings]
+    [feeSettings, balance, dayStartTime]
   );
 
   // Live polling: updates the latest candle every 5 seconds when in live mode (not in replay)
@@ -340,7 +427,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let isMounted = true;
     const interval = setInterval(async () => {
       try {
-        const latest = await fetchLatestCandles(timeframe, 3);
+        const latest = await fetchLatestCandles(symbol, timeframe, 3);
         if (!isMounted || latest.length === 0) return;
 
         setAllCandles((prevCandles) => {
@@ -361,7 +448,211 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       isMounted = false;
       clearInterval(interval);
     };
-  }, [timeframe, replay.isActive, isLoading, processCandleTick]);
+  }, [symbol, timeframe, replay.isActive, isLoading, processCandleTick]);
+
+  // Prop Firm Evaluation
+  const unrealizedNetPnl = activePosition?.unrealizedNetPnl || 0;
+  const propFirmEvaluation: PropFirmEvaluationResult = useMemo(() => {
+    return evaluatePropFirmRules(
+      initialBalance,
+      balance,
+      dayStartBalance,
+      unrealizedNetPnl,
+      propFirmRules
+    );
+  }, [initialBalance, balance, dayStartBalance, unrealizedNetPnl, propFirmRules]);
+
+  const updatePropFirmRules = useCallback((rules: Partial<PropFirmRuleSettings>) => {
+    setPropFirmRules((prev) => ({ ...prev, ...rules }));
+  }, []);
+
+  // Session Management (FX Replay style)
+  const createSession = useCallback(
+    async (params: {
+      name: string;
+      symbol: SupportedSymbol;
+      startDate: number;
+      endDate?: number | null;
+      initialBalance: number;
+      propFirm: PropFirmRuleSettings;
+    }) => {
+      const newSession: BacktestSession = {
+        id: `session_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        name: params.name,
+        symbol: params.symbol,
+        timeframe,
+        startDate: params.startDate,
+        endDate: params.endDate ?? null,
+        currentReplayTime: params.startDate,
+        initialBalance: params.initialBalance,
+        currentBalance: params.initialBalance,
+        peakBalance: params.initialBalance,
+        dayStartBalance: params.initialBalance,
+        dayStartTime: params.startDate,
+        propFirm: params.propFirm,
+        propFirmStatus: 'in_progress',
+        breachReason: null,
+        breachTime: null,
+        passedTime: null,
+        trades: [],
+        activePosition: null,
+        limitOrders: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const updated = [newSession, ...sessions.filter((s) => s.id !== newSession.id)];
+      setSessions(updated);
+      saveStoredSessions(updated);
+      setActiveSessionId(newSession.id);
+      saveStoredActiveSessionId(newSession.id);
+
+      setSymbolState(params.symbol);
+      saveStoredSymbol(params.symbol);
+      setInitialBalance(params.initialBalance);
+      setBalance(params.initialBalance);
+      setPropFirmRules(params.propFirm);
+      setDayStartBalance(params.initialBalance);
+      setDayStartTime(params.startDate);
+      setClosedTrades([]);
+      setActivePosition(null);
+      setLimitOrders([]);
+
+      // Jump to start date on chart
+      await jumpToTimestamp(params.startDate);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessions, timeframe]
+  );
+
+  const loadSession = useCallback(
+    async (sessionId: string) => {
+      const sess = sessions.find((s) => s.id === sessionId);
+      if (!sess) return;
+
+      setActiveSessionId(sess.id);
+      saveStoredActiveSessionId(sess.id);
+
+      setSymbolState(sess.symbol);
+      saveStoredSymbol(sess.symbol);
+      setInitialBalance(sess.initialBalance);
+      setBalance(sess.currentBalance);
+      setPropFirmRules(sess.propFirm);
+      setDayStartBalance(sess.dayStartBalance || sess.initialBalance);
+      setDayStartTime(sess.dayStartTime || sess.startDate);
+      setClosedTrades(sess.trades || []);
+      setActivePosition(sess.activePosition || null);
+      setLimitOrders(sess.limitOrders || []);
+
+      const targetTime = sess.currentReplayTime || sess.startDate;
+      await jumpToTimestamp(targetTime);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessions]
+  );
+
+  const resetSession = useCallback(
+    async (sessionId: string) => {
+      const sess = sessions.find((s) => s.id === sessionId);
+      if (!sess) return;
+
+      const resetObj: BacktestSession = {
+        ...sess,
+        currentBalance: sess.initialBalance,
+        peakBalance: sess.initialBalance,
+        dayStartBalance: sess.initialBalance,
+        dayStartTime: sess.startDate,
+        currentReplayTime: sess.startDate,
+        propFirmStatus: 'in_progress',
+        breachReason: null,
+        breachTime: null,
+        passedTime: null,
+        trades: [],
+        activePosition: null,
+        limitOrders: [],
+        updatedAt: Date.now(),
+      };
+
+      const updated = sessions.map((s) => (s.id === sessionId ? resetObj : s));
+      setSessions(updated);
+      saveStoredSessions(updated);
+
+      if (activeSessionId === sessionId) {
+        setBalance(sess.initialBalance);
+        setClosedTrades([]);
+        setActivePosition(null);
+        setLimitOrders([]);
+        setDayStartBalance(sess.initialBalance);
+        setDayStartTime(sess.startDate);
+        await jumpToTimestamp(sess.startDate);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessions, activeSessionId]
+  );
+
+  const deleteSession = useCallback(
+    (sessionId: string) => {
+      const updated = sessions.filter((s) => s.id !== sessionId);
+      setSessions(updated);
+      saveStoredSessions(updated);
+      if (activeSessionId === sessionId) {
+        const next = updated[0]?.id || null;
+        setActiveSessionId(next);
+        saveStoredActiveSessionId(next);
+      }
+    },
+    [sessions, activeSessionId]
+  );
+
+  const updateSessionPropFirm = useCallback(
+    (rules: PropFirmRuleSettings) => {
+      setPropFirmRules(rules);
+      if (activeSessionId) {
+        setSessions((prev) =>
+          prev.map((s) => (s.id === activeSessionId ? { ...s, propFirm: rules, updatedAt: Date.now() } : s))
+        );
+      }
+    },
+    [activeSessionId]
+  );
+
+  // Sync session state to storage whenever trades/balance/orders change
+  useEffect(() => {
+    if (!activeSessionId) return;
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === activeSessionId) {
+          return {
+            ...s,
+            currentBalance: balance,
+            peakBalance: Math.max(s.peakBalance || s.initialBalance, balance),
+            dayStartBalance,
+            dayStartTime,
+            trades: closedTrades,
+            activePosition,
+            limitOrders,
+            propFirmStatus: propFirmEvaluation.status,
+            breachReason: propFirmEvaluation.breachReason,
+            currentReplayTime: replay.currentCutTime || s.startDate,
+            updatedAt: Date.now(),
+          };
+        }
+        return s;
+      })
+    );
+  }, [
+    activeSessionId,
+    balance,
+    closedTrades,
+    activePosition,
+    limitOrders,
+    propFirmEvaluation.status,
+    propFirmEvaluation.breachReason,
+    dayStartBalance,
+    dayStartTime,
+    replay.currentCutTime,
+  ]);
 
   // Replay Actions
   const startReplaySelection = useCallback(() => {
@@ -381,7 +672,6 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const cutAtTime = useCallback(
     (timestampSeconds: number) => {
-      if (allCandles.length === 0) return;
       let idx = -1;
       for (let i = 0; i < allCandles.length; i++) {
         if (allCandles[i].time <= timestampSeconds) {
@@ -390,13 +680,13 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           break;
         }
       }
+
       if (idx === -1) idx = 0;
-      const finalTime = allCandles[idx]?.time ?? timestampSeconds;
 
       setReplay({
         isActive: true,
         isSelectingCutPoint: false,
-        currentCutTime: finalTime,
+        currentCutTime: allCandles[idx]?.time || timestampSeconds,
         currentIndex: idx,
         isPlaying: false,
         playbackSpeed: 500,
@@ -414,7 +704,6 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const nextCandle = allCandles[nextIdx];
       const nextTime = nextCandle?.time ?? prev.currentCutTime;
 
-      // Evaluate limit orders & active position
       if (nextCandle) {
         processCandleTick(nextCandle);
       }
@@ -486,7 +775,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     async (timestampSeconds: number) => {
       setIsLoading(true);
       try {
-        const fetched = await fetchHistoricalDateRange(timeframe, timestampSeconds);
+        const fetched = await fetchHistoricalDateRange(symbol, timeframe, timestampSeconds);
         setAllCandles(fetched);
         let idx = -1;
         for (let i = 0; i < fetched.length; i++) {
@@ -512,32 +801,20 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setIsLoading(false);
       }
     },
-    [timeframe]
+    [symbol, timeframe]
   );
 
   // Playback timer effect
   useEffect(() => {
     if (replay.isPlaying && replay.isActive) {
       playIntervalRef.current = window.setInterval(() => {
-        setReplay((prev) => {
-          if (prev.currentIndex >= allCandles.length - 1) {
-            return { ...prev, isPlaying: false };
-          }
-          const nextIdx = prev.currentIndex + 1;
-          const nextCandle = allCandles[nextIdx];
-          if (nextCandle) {
-            processCandleTick(nextCandle);
-          }
-          return {
-            ...prev,
-            currentIndex: nextIdx,
-            currentCutTime: nextCandle?.time ?? prev.currentCutTime,
-          };
-        });
+        stepForward();
       }, replay.playbackSpeed);
-    } else if (playIntervalRef.current) {
-      clearInterval(playIntervalRef.current);
-      playIntervalRef.current = null;
+    } else {
+      if (playIntervalRef.current) {
+        clearInterval(playIntervalRef.current);
+        playIntervalRef.current = null;
+      }
     }
 
     return () => {
@@ -546,51 +823,37 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         playIntervalRef.current = null;
       }
     };
-  }, [replay.isPlaying, replay.isActive, replay.playbackSpeed, allCandles, processCandleTick]);
+  }, [replay.isPlaying, replay.isActive, replay.playbackSpeed, stepForward]);
 
-  // Keyboard shortcuts
+  // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLSelectElement
-      ) {
-        return;
-      }
+      const activeTag = document.activeElement?.tagName.toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea') return;
 
-      if (e.code === 'Space') {
+      if (e.key === ' ' && replay.isActive) {
         e.preventDefault();
-        if (replay.isActive) {
-          togglePlay();
-        }
-      } else if (e.code === 'ArrowRight') {
+        togglePlay();
+      } else if (e.key === 'ArrowRight' && replay.isActive) {
         e.preventDefault();
-        if (replay.isActive) {
-          stepForward();
-        }
-      } else if (e.code === 'ArrowLeft') {
+        stepForward();
+      } else if (e.key === 'ArrowLeft' && replay.isActive) {
         e.preventDefault();
-        if (replay.isActive) {
-          stepBackward();
-        }
-      } else if (e.key === 'r' || e.key === 'к' || e.key === 'R') {
-        if (!e.ctrlKey && !e.metaKey) {
-          e.preventDefault();
-          if (replay.isActive) {
-            exitReplay();
-          } else {
-            startReplaySelection();
-          }
+        stepBackward();
+      } else if (e.key.toLowerCase() === 'r') {
+        if (!replay.isActive && !replay.isSelectingCutPoint) {
+          startReplaySelection();
+        } else if (replay.isSelectingCutPoint) {
+          cancelReplaySelection();
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [replay.isActive, togglePlay, stepForward, stepBackward, exitReplay, startReplaySelection]);
+  }, [replay.isActive, replay.isSelectingCutPoint, togglePlay, stepForward, stepBackward, startReplaySelection, cancelReplaySelection]);
 
-  // Settings handlers
+  // Settings Actions
   const updateCandleColors = useCallback((colors: Partial<CandleColorSettings>) => {
     setCandleColors((prev) => {
       const next = { ...prev, ...colors };
@@ -642,11 +905,21 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
       if (!tp) {
         const slDist = Math.abs(entryPrice - sl);
-        tp = side === 'long' ? entryPrice + slDist * riskSettings.defaultTpRatio : entryPrice - slDist * riskSettings.defaultTpRatio;
+        tp = side === 'long'
+          ? entryPrice + slDist * riskSettings.defaultTpRatio
+          : entryPrice - slDist * riskSettings.defaultTpRatio;
       }
 
-      const riskCalc = calculateRiskPosition(balance, riskSettings, entryPrice, sl, tp);
-      if (!riskCalc.isValid || riskCalc.sizeBtc <= 0) {
+      const riskCalc = calculateRiskPosition(
+        balance,
+        riskSettings,
+        entryPrice,
+        sl,
+        tp,
+        symbolInfo.lotPrecision,
+        symbolInfo.baseAsset
+      );
+      if (!riskCalc.isValid || riskCalc.sizeAsset <= 0) {
         console.warn('Invalid position calculation:', riskCalc.error);
         return false;
       }
@@ -665,23 +938,20 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const newPos = engineOpenPosition(
         side,
         entryPrice,
-        riskCalc.sizeBtc,
-        Number(sl.toFixed(1)),
-        Number(tp.toFixed(1)),
+        riskCalc.sizeAsset,
+        Number(sl.toFixed(symbolInfo.pricePrecision)),
+        Number(tp.toFixed(symbolInfo.pricePrecision)),
         currentCandle.time,
         feeSettings
       );
-
       setActivePosition(newPos);
       return true;
     },
-    [currentCandle, balance, riskSettings, activePosition, feeSettings]
+    [currentCandle, riskSettings, balance, symbolInfo, activePosition, feeSettings]
   );
 
   const addLimitOrder = useCallback(
     (side: PositionSide, limitPrice: number, customSl?: number, customTp?: number): boolean => {
-      if (limitPrice <= 0) return false;
-
       let sl = customSl;
       let tp = customTp;
 
@@ -690,30 +960,39 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
       if (!tp) {
         const slDist = Math.abs(limitPrice - sl);
-        tp = side === 'long' ? limitPrice + slDist * riskSettings.defaultTpRatio : limitPrice - slDist * riskSettings.defaultTpRatio;
+        tp = side === 'long'
+          ? limitPrice + slDist * riskSettings.defaultTpRatio
+          : limitPrice - slDist * riskSettings.defaultTpRatio;
       }
 
-      const riskCalc = calculateRiskPosition(balance, riskSettings, limitPrice, sl, tp);
-      if (!riskCalc.isValid || riskCalc.sizeBtc <= 0) {
-        console.warn('Invalid limit order calculation:', riskCalc.error);
+      const riskCalc = calculateRiskPosition(
+        balance,
+        riskSettings,
+        limitPrice,
+        sl,
+        tp,
+        symbolInfo.lotPrecision,
+        symbolInfo.baseAsset
+      );
+      if (!riskCalc.isValid || riskCalc.sizeAsset <= 0) {
         return false;
       }
 
       const order: LimitOrder = {
         id: `limit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         side,
-        limitPrice: Number(limitPrice.toFixed(1)),
-        size: riskCalc.sizeBtc,
-        stopLoss: Number(sl.toFixed(1)),
-        takeProfit: Number(tp.toFixed(1)),
-        createdTime: currentCandle?.time || Math.floor(Date.now() / 1000),
+        limitPrice: Number(limitPrice.toFixed(symbolInfo.pricePrecision)),
+        size: riskCalc.sizeAsset,
+        stopLoss: Number(sl.toFixed(symbolInfo.pricePrecision)),
+        takeProfit: Number(tp.toFixed(symbolInfo.pricePrecision)),
+        createdTime: currentCandle ? currentCandle.time : Math.floor(Date.now() / 1000),
         riskUsd: riskCalc.riskUsd,
       };
 
-      setLimitOrders((prev) => [...prev, order]);
+      setLimitOrders((prev) => [order, ...prev]);
       return true;
     },
-    [balance, riskSettings, currentCandle]
+    [balance, riskSettings, symbolInfo, currentCandle]
   );
 
   const cancelLimitOrder = useCallback((id: string) => {
@@ -738,46 +1017,42 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setActivePosition(null);
     setLimitOrders([]);
     setClosedTrades([]);
-  }, []);
+  }, [initialBalance]);
 
-  // Real-time draggable line updates
+  // Position & Order Drag updates
   const updateActivePositionSL = useCallback((newSl: number) => {
     setActivePosition((prev) => {
       if (!prev) return null;
-      return { ...prev, stopLoss: Number(newSl.toFixed(1)) };
+      return { ...prev, stopLoss: newSl };
     });
   }, []);
 
   const updateActivePositionTP = useCallback((newTp: number) => {
     setActivePosition((prev) => {
       if (!prev) return null;
-      return { ...prev, takeProfit: Number(newTp.toFixed(1)) };
+      return { ...prev, takeProfit: newTp };
     });
   }, []);
 
   const updateLimitOrderPrice = useCallback((id: string, newPrice: number) => {
     setLimitOrders((prev) =>
-      prev.map((o) => (o.id === id ? { ...o, limitPrice: Number(newPrice.toFixed(1)) } : o))
+      prev.map((o) => (o.id === id ? { ...o, limitPrice: newPrice } : o))
     );
   }, []);
 
   const updateLimitOrderSL = useCallback((id: string, newSl: number) => {
     setLimitOrders((prev) =>
-      prev.map((o) => (o.id === id ? { ...o, stopLoss: Number(newSl.toFixed(1)) } : o))
+      prev.map((o) => (o.id === id ? { ...o, stopLoss: newSl } : o))
     );
   }, []);
 
   const updateLimitOrderTP = useCallback((id: string, newTp: number) => {
     setLimitOrders((prev) =>
-      prev.map((o) => (o.id === id ? { ...o, takeProfit: Number(newTp.toFixed(1)) } : o))
+      prev.map((o) => (o.id === id ? { ...o, takeProfit: newTp } : o))
     );
   }, []);
 
-  const metrics = useMemo(() => {
-    return calculateMetrics(closedTrades, initialBalance);
-  }, [closedTrades, initialBalance]);
-
-  // Drawing Handlers
+  // Drawing Tools
   const addDrawing = useCallback((drawing: DrawingObject) => {
     setDrawings((prev) => [...prev, drawing]);
   }, []);
@@ -794,24 +1069,18 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const clearDrawings = useCallback(() => {
     setDrawings([]);
+    setSelectedDrawingId(null);
   }, []);
 
   const viewportCenterGetterRef = useRef<(() => { time: number; price: number } | null) | null>(null);
-
   const registerViewportCenterGetter = useCallback((getter: () => { time: number; price: number } | null) => {
     viewportCenterGetterRef.current = getter;
   }, []);
 
   const getViewportCenter = useCallback(() => {
     if (viewportCenterGetterRef.current) {
-      try {
-        const center = viewportCenterGetterRef.current();
-        if (center && !isNaN(center.time) && !isNaN(center.price)) {
-          return center;
-        }
-      } catch (err) {
-        console.warn('Failed to calculate viewport center:', err);
-      }
+      const pt = viewportCenterGetterRef.current();
+      if (pt) return pt;
     }
     if (currentCandle) {
       return { time: currentCandle.time, price: currentCandle.close };
@@ -823,8 +1092,14 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return null;
   }, [currentCandle, visibleCandles]);
 
+  const metrics = useMemo(() => {
+    return calculateMetrics(closedTrades, initialBalance);
+  }, [closedTrades, initialBalance]);
+
   const value = {
     symbol,
+    setSymbol,
+    symbolInfo,
     timeframe,
     setTimeframe,
     isLoading,
@@ -884,6 +1159,19 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     updateOrderSetup,
     registerViewportCenterGetter,
     getViewportCenter,
+    sessions,
+    activeSession,
+    activeSessionId,
+    createSession,
+    loadSession,
+    resetSession,
+    deleteSession,
+    updateSessionPropFirm,
+    propFirmRules,
+    updatePropFirmRules,
+    propFirmEvaluation,
+    isCabinetOpen,
+    setIsCabinetOpen,
   };
 
   return <ChartContext.Provider value={value}>{children}</ChartContext.Provider>;

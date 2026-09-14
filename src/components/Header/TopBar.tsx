@@ -11,9 +11,13 @@ import {
   Loader2,
   Layers,
   Activity,
+  Briefcase,
+  ChevronDown,
+  Check,
 } from 'lucide-react';
 import { useChart } from '../../context/ChartContext';
 import { Timeframe } from '../../types/chart';
+import { SupportedSymbol, SUPPORTED_SYMBOLS } from '../../types/session';
 import { formatPercent, formatPrice, formatVolume } from '../../utils/formatters';
 
 interface TopBarProps {
@@ -37,6 +41,8 @@ const TIMEFRAMES: Array<{ tf: Timeframe; label: string }> = [
 export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal }) => {
   const {
     symbol,
+    setSymbol,
+    symbolInfo,
     timeframe,
     setTimeframe,
     isLoading,
@@ -46,10 +52,13 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
     exitReplay,
     showFractals,
     setShowFractals,
+    setIsCabinetOpen,
+    activeSession,
   } = useChart();
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isIndicatorsOpen, setIsIndicatorsOpen] = useState(false);
+  const [isSymbolMenuOpen, setIsSymbolMenuOpen] = useState(false);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -73,17 +82,65 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
     <header className="h-12 border-b border-[#2a2e39] bg-[#131722] flex items-center justify-between px-3 shrink-0 select-none z-10">
       {/* Left: Symbol & Stats */}
       <div className="flex items-center gap-3">
-        {/* Symbol badge */}
-        <div className="flex items-center gap-2 px-2.5 py-1 bg-[#1e222d] border border-[#2a2e39] rounded-lg">
-          <div className="w-5 h-5 rounded-full bg-[#f7931a] flex items-center justify-center font-bold text-black text-xs shadow-sm">
-            ₿
-          </div>
-          <span className="font-semibold text-sm tracking-wide text-white font-mono">
-            {symbol}
-          </span>
-          <span className="px-1.5 py-0.2 bg-[#2a2e39] text-[10px] font-semibold text-tv-yellow rounded uppercase tracking-wider">
-            PERP
-          </span>
+        {/* Interactive Symbol Selector Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setIsSymbolMenuOpen(!isSymbolMenuOpen)}
+            className="flex items-center gap-2 px-2.5 py-1 bg-[#1e222d] border border-[#2a2e39] hover:border-white/30 rounded-lg transition-colors cursor-pointer"
+            title="Сменить актив (BTC, ETH, SOL)"
+          >
+            <div
+              style={{ backgroundColor: symbolInfo.color }}
+              className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-black text-xs shadow-sm"
+            >
+              {symbolInfo.icon}
+            </div>
+            <span className="font-semibold text-sm tracking-wide text-white font-mono">
+              {symbol}
+            </span>
+            <span className="px-1.5 py-0.2 bg-[#2a2e39] text-[10px] font-semibold text-tv-yellow rounded uppercase tracking-wider">
+              PERP
+            </span>
+            <ChevronDown className="w-3.5 h-3.5 text-tv-textMuted" />
+          </button>
+
+          {isSymbolMenuOpen && (
+            <div className="absolute left-0 top-full mt-2 w-60 bg-[#1e222d] border border-[#2a2e39] rounded-xl shadow-2xl p-1.5 z-50 space-y-1 animate-in fade-in zoom-in-95 duration-100">
+              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase text-tv-textMuted border-b border-[#2a2e39]">
+                Выберите инструмент
+              </div>
+              {(Object.keys(SUPPORTED_SYMBOLS) as SupportedSymbol[]).map((s) => {
+                const info = SUPPORTED_SYMBOLS[s];
+                const isCurrent = s === symbol;
+                return (
+                  <button
+                    key={s}
+                    onClick={() => {
+                      setSymbol(s);
+                      setIsSymbolMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between p-2 rounded-lg text-xs transition-colors ${
+                      isCurrent ? 'bg-tv-blue/20 text-white font-bold' : 'hover:bg-[#131722] text-tv-text'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        style={{ backgroundColor: info.color }}
+                        className="w-5 h-5 rounded-full flex items-center justify-center text-black font-bold text-xs"
+                      >
+                        {info.icon}
+                      </div>
+                      <div className="text-left">
+                        <div className="font-mono text-white text-xs">{info.symbol}</div>
+                        <div className="text-[10px] text-tv-textMuted">{info.name}</div>
+                      </div>
+                    </div>
+                    {isCurrent && <Check className="w-4 h-4 text-tv-blue" />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Loading spinner */}
@@ -151,6 +208,22 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
 
       {/* Right: Tools & Actions */}
       <div className="flex items-center gap-2">
+        {/* Personal Cabinet (FX Replay Tracker) */}
+        <button
+          onClick={() => setIsCabinetOpen(true)}
+          title="Личный кабинет трекера сессий (FX Replay)"
+          className="flex items-center gap-2 px-3 py-1.5 bg-[#1e222d] border border-[#2a2e39] hover:border-tv-blue/50 text-white rounded-lg text-xs font-medium transition-all shadow-sm group cursor-pointer"
+        >
+          <Briefcase className="w-3.5 h-3.5 text-tv-blue group-hover:scale-110 transition-transform" />
+          <span className="font-semibold hidden sm:inline">Личный кабинет</span>
+          <span className="font-semibold sm:hidden">Кабинет</span>
+          {activeSession && (
+            <span className="text-[10px] text-tv-yellow font-mono px-1.5 py-0.2 bg-black/40 rounded font-bold hidden md:inline">
+              {activeSession.name.slice(0, 14)}
+            </span>
+          )}
+        </button>
+
         {/* Bar Replay Toggle Button */}
         <button
           onClick={() => {

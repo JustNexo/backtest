@@ -48,7 +48,13 @@ export const TradingPanel: React.FC = () => {
     timezone,
     orderSetup,
     updateOrderSetup,
+    symbolInfo,
   } = useChart();
+
+  const roundPrice = (p: number) => {
+    const factor = Math.pow(10, symbolInfo.precision);
+    return Math.round(p * factor) / factor;
+  };
 
   const currentPrice = currentCandle?.close || orderSetup.entryPrice || 65000;
 
@@ -64,26 +70,28 @@ export const TradingPanel: React.FC = () => {
       riskSettings,
       effectiveEntryPrice,
       orderSetup.stopLoss,
-      orderSetup.takeProfit
+      orderSetup.takeProfit,
+      symbolInfo.lotPrecision,
+      symbolInfo.baseAsset
     );
-  }, [balance, riskSettings, effectiveEntryPrice, orderSetup.stopLoss, orderSetup.takeProfit]);
+  }, [balance, riskSettings, effectiveEntryPrice, orderSetup.stopLoss, orderSetup.takeProfit, symbolInfo.lotPrecision, symbolInfo.baseAsset]);
 
   const handleSetSide = (side: 'long' | 'short') => {
     if (side === orderSetup.side) return;
     const entry = effectiveEntryPrice;
-    const slDist = Math.abs(entry - orderSetup.stopLoss) || Math.round(entry * 0.008 * 10) / 10;
-    const tpDist = Math.abs(orderSetup.takeProfit - entry) || Math.round(slDist * 2 * 10) / 10;
+    const slDist = Math.abs(entry - orderSetup.stopLoss) || roundPrice(entry * 0.008);
+    const tpDist = Math.abs(orderSetup.takeProfit - entry) || roundPrice(slDist * 2);
     updateOrderSetup({
       side,
-      stopLoss: side === 'long' ? Math.round((entry - slDist) * 10) / 10 : Math.round((entry + slDist) * 10) / 10,
-      takeProfit: side === 'long' ? Math.round((entry + tpDist) * 10) / 10 : Math.round((entry - tpDist) * 10) / 10,
+      stopLoss: side === 'long' ? roundPrice(entry - slDist) : roundPrice(entry + slDist),
+      takeProfit: side === 'long' ? roundPrice(entry + tpDist) : roundPrice(entry - tpDist),
     });
   };
 
   const handleSetOrderType = (type: 'market' | 'limit') => {
     if (type === orderSetup.orderType) return;
     const entry = type === 'limit'
-      ? (orderSetup.side === 'long' ? Math.round(currentPrice * 0.995 * 10) / 10 : Math.round(currentPrice * 1.005 * 10) / 10)
+      ? (orderSetup.side === 'long' ? roundPrice(currentPrice * 0.995) : roundPrice(currentPrice * 1.005))
       : currentPrice;
     updateOrderSetup({
       orderType: type,
@@ -107,7 +115,7 @@ export const TradingPanel: React.FC = () => {
 
   const handleExportCsv = () => {
     if (closedTrades.length === 0) return;
-    const headers = ['ID', 'Side', 'Entry Time', 'Exit Time', 'Entry Price', 'Exit Price', 'Size BTC', 'Gross PnL', 'Fees', 'Swap', 'Net PnL', 'Return %', 'Reason'];
+    const headers = ['ID', 'Side', 'Entry Time', 'Exit Time', 'Entry Price', 'Exit Price', `Size (${symbolInfo.baseAsset})`, 'Gross PnL', 'Fees', 'Swap', 'Net PnL', 'Return %', 'Reason'];
     const rows = closedTrades.map(t => [
       t.id,
       t.side.toUpperCase(),
@@ -350,15 +358,15 @@ export const TradingPanel: React.FC = () => {
                         Лимитная цена входа ($)
                       </label>
                       <button
-                        onClick={() => updateOrderSetup({ entryPrice: Math.round(currentPrice * 10) / 10 })}
+                        onClick={() => updateOrderSetup({ entryPrice: roundPrice(currentPrice) })}
                         className="text-[10px] text-tv-textMuted hover:text-white underline"
                       >
-                        Текущая (${formatPrice(currentPrice, 1)})
+                        Текущая (${formatPrice(currentPrice, symbolInfo.precision)})
                       </button>
                     </div>
                     <input
                       type="number"
-                      step="0.5"
+                      step={symbolInfo.precision >= 2 ? '0.01' : '0.1'}
                       value={orderSetup.entryPrice || ''}
                       onChange={(e) =>
                         updateOrderSetup({ entryPrice: parseFloat(e.target.value) || 0 })
@@ -435,9 +443,9 @@ export const TradingPanel: React.FC = () => {
                           <button
                             key={pct}
                             onClick={() => {
-                              const dist = Math.round(effectiveEntryPrice * (pct / 100) * 10) / 10;
+                              const dist = roundPrice(effectiveEntryPrice * (pct / 100));
                               const newSl = orderSetup.side === 'long' ? effectiveEntryPrice - dist : effectiveEntryPrice + dist;
-                              updateOrderSetup({ stopLoss: Math.round(newSl * 10) / 10 });
+                              updateOrderSetup({ stopLoss: roundPrice(newSl) });
                             }}
                             className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-[#1e222d] hover:bg-tv-red/30 border border-[#2a2e39] text-tv-textMuted hover:text-white transition-colors"
                           >
@@ -448,7 +456,7 @@ export const TradingPanel: React.FC = () => {
                     </div>
                     <input
                       type="number"
-                      step="0.5"
+                      step={symbolInfo.precision >= 2 ? '0.01' : '0.1'}
                       value={orderSetup.stopLoss || ''}
                       onChange={(e) =>
                         updateOrderSetup({ stopLoss: parseFloat(e.target.value) || 0 })
@@ -470,9 +478,9 @@ export const TradingPanel: React.FC = () => {
                             onClick={() => {
                               const slDist = Math.abs(effectiveEntryPrice - orderSetup.stopLoss);
                               if (slDist > 0) {
-                                const tpDist = Math.round(slDist * rr * 10) / 10;
+                                const tpDist = roundPrice(slDist * rr);
                                 const newTp = orderSetup.side === 'long' ? effectiveEntryPrice + tpDist : effectiveEntryPrice - tpDist;
-                                updateOrderSetup({ takeProfit: Math.round(newTp * 10) / 10 });
+                                updateOrderSetup({ takeProfit: roundPrice(newTp) });
                               }
                             }}
                             className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-[#1e222d] hover:bg-tv-green/30 border border-[#2a2e39] text-tv-textMuted hover:text-white transition-colors"
@@ -524,7 +532,7 @@ export const TradingPanel: React.FC = () => {
                     <div className="p-2 bg-[#1e222d] rounded-lg">
                       <div className="text-[10px] text-tv-textMuted">Объем позиции:</div>
                       <div className="text-white font-semibold text-sm">
-                        {riskCalc.sizeBtc} BTC
+                        {riskCalc.sizeAsset} {symbolInfo.baseAsset}
                       </div>
                     </div>
 
@@ -633,7 +641,7 @@ export const TradingPanel: React.FC = () => {
                     </span>
                     <div>
                       <div className="text-sm font-semibold text-white font-mono">
-                        {activePosition.size} BTC @ ${formatPrice(activePosition.entryPrice)}
+                        {activePosition.size} {symbolInfo.baseAsset} @ ${formatPrice(activePosition.entryPrice, symbolInfo.precision)}
                       </div>
                       <div className="text-[11px] text-tv-textMuted font-mono">
                         Открыта: {formatDateTime(activePosition.entryTime, timezone)}
@@ -732,14 +740,14 @@ export const TradingPanel: React.FC = () => {
                             </span>
                           </td>
                           <td className="py-2 px-3 text-[#f7a600] font-bold">
-                            ${formatPrice(o.limitPrice)}
+                            ${formatPrice(o.limitPrice, symbolInfo.precision)}
                           </td>
-                          <td className="py-2 px-3 text-white">{o.size} BTC</td>
+                          <td className="py-2 px-3 text-white">{o.size} {symbolInfo.baseAsset}</td>
                           <td className="py-2 px-3 text-tv-red">
-                            ${o.stopLoss ? formatPrice(o.stopLoss) : '—'}
+                            ${o.stopLoss ? formatPrice(o.stopLoss, symbolInfo.precision) : '—'}
                           </td>
                           <td className="py-2 px-3 text-tv-green">
-                            ${o.takeProfit ? formatPrice(o.takeProfit) : '—'}
+                            ${o.takeProfit ? formatPrice(o.takeProfit, symbolInfo.precision) : '—'}
                           </td>
                           <td className="py-2 px-3 text-tv-yellow font-semibold">
                             ${o.riskUsd}
@@ -820,9 +828,9 @@ export const TradingPanel: React.FC = () => {
                           <td className="py-2 px-3 text-tv-textMuted">
                             {formatDateTime(t.entryTime, timezone)}
                           </td>
-                          <td className="py-2 px-3 text-white">${formatPrice(t.entryPrice)}</td>
-                          <td className="py-2 px-3 text-white">${formatPrice(t.exitPrice)}</td>
-                          <td className="py-2 px-3">{t.size} BTC</td>
+                          <td className="py-2 px-3 text-white">${formatPrice(t.entryPrice, symbolInfo.precision)}</td>
+                          <td className="py-2 px-3 text-white">${formatPrice(t.exitPrice, symbolInfo.precision)}</td>
+                          <td className="py-2 px-3">{t.size} {symbolInfo.baseAsset}</td>
                           <td className="py-2 px-3 text-tv-textMuted">
                             -${(t.feeOpen + t.feeClose).toFixed(2)}
                           </td>

@@ -157,3 +157,59 @@ export function saveStoredRiskSettings(settings: RiskSettings): void {
     console.warn('Error saving risk settings:', e);
   }
 }
+
+const SESSION_STORAGE_KEYS = {
+  SESSIONS: 'tv_backtest_sessions',
+  ACTIVE_SESSION_ID: 'tv_backtest_active_session_id',
+  SYMBOL: 'tv_backtest_active_symbol',
+};
+
+export function loadStoredSessions(): any[] {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEYS.SESSIONS);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.warn('Error reading stored sessions:', e);
+  }
+  return [];
+}
+
+export function saveStoredSessions(sessions: any[]): void {
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
+  } catch (e) {
+    console.warn('Error saving sessions:', e);
+  }
+}
+
+export function loadStoredActiveSessionId(): string | null {
+  try {
+    return localStorage.getItem(SESSION_STORAGE_KEYS.ACTIVE_SESSION_ID) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function saveStoredActiveSessionId(id: string | null): void {
+  try {
+    if (id) {
+      localStorage.setItem(SESSION_STORAGE_KEYS.ACTIVE_SESSION_ID, id);
+    } else {
+      localStorage.removeItem(SESSION_STORAGE_KEYS.ACTIVE_SESSION_ID);
+    }
+  } catch (e) {}
+}
+
+export function loadStoredSymbol(): string {
+  try {
+    return localStorage.getItem(SESSION_STORAGE_KEYS.SYMBOL) || 'BTCUSDT.P';
+  } catch (e) {
+    return 'BTCUSDT.P';
+  }
+}
+
+export function saveStoredSymbol(symbol: string): void {
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEYS.SYMBOL, symbol);
+  } catch (e) {}
+}

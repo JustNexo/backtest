@@ -15,6 +15,7 @@ import {
 import { useChart } from '../../context/ChartContext';
 import { formatCurrency, formatDateTime, formatPercent, formatPrice, formatTickMark, TIMEZONE_OPTIONS } from '../../utils/formatters';
 import { calculateRiskPosition } from '../../services/tradeEngine';
+import { SUPPORTED_SYMBOLS, SupportedSymbol } from '../../types/session';
 import { Scissors, GripVertical, X, Globe, ChevronDown, Check } from 'lucide-react';
 import { DrawingLayer } from './DrawingLayer';
 
@@ -63,6 +64,7 @@ export const TradingViewChart: React.FC = () => {
   const [candleSeriesInstance, setCandleSeriesInstance] = useState<ISeriesApi<'Candlestick'> | null>(null);
 
   const {
+    symbol,
     visibleCandles,
     candleColors,
     themeSettings,
@@ -84,6 +86,7 @@ export const TradingViewChart: React.FC = () => {
     updateLimitOrderSL,
     updateLimitOrderTP,
     cancelLimitOrder,
+    symbolInfo,
   } = useChart();
 
   // Initialize chart
@@ -225,22 +228,82 @@ export const TradingViewChart: React.FC = () => {
       forceUpdate();
     };
 
-    const handleWheel = () => {
+    const handleWheel = (e: WheelEvent) => {
       startActiveSync();
       if (wheelTimer) clearTimeout(wheelTimer);
       wheelTimer = setTimeout(() => {
         stopActiveSync();
         forceUpdate();
       }, 300);
+
+      // Check if mouse is over the right price scale column
+      if (containerEl && candleSeries) {
+        const rect = containerEl.getBoundingClientRect();
+        const priceScaleWidth = chart.priceScale('right').width() || 75;
+        const isOverPriceScale = e.clientX >= (rect.right - priceScaleWidth) && e.clientX <= rect.right + 10;
+
+        if (isOverPriceScale) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          const rightScale = chart.priceScale('right');
+          const currentRange = rightScale.getVisibleRange();
+
+          let minPrice = currentRange ? currentRange.from : null;
+          let maxPrice = currentRange ? currentRange.to : null;
+
+          if (minPrice === null || maxPrice === null || isNaN(minPrice) || isNaN(maxPrice)) {
+            const topPrice = candleSeries.coordinateToPrice(0);
+            const bottomPrice = candleSeries.coordinateToPrice(rect.height);
+            if (topPrice !== null && bottomPrice !== null) {
+              minPrice = Math.min(topPrice, bottomPrice);
+              maxPrice = Math.max(topPrice, bottomPrice);
+            }
+          }
+
+          if (minPrice !== null && maxPrice !== null && maxPrice > minPrice) {
+            const delta = e.deltaY;
+            // Exponential zoom factor
+            const factor = Math.exp(delta * 0.0018);
+
+            const mouseY = e.clientY - rect.top;
+            const cursorPrice = candleSeries.coordinateToPrice(mouseY);
+            const centerPrice = cursorPrice !== null && cursorPrice >= minPrice && cursorPrice <= maxPrice
+              ? cursorPrice
+              : (minPrice + maxPrice) / 2;
+
+            const newMin = centerPrice - (centerPrice - minPrice) * factor;
+            const newMax = centerPrice + (maxPrice - centerPrice) * factor;
+
+            if (newMax > newMin && newMin > 0) {
+              rightScale.setAutoScale(false);
+              rightScale.setVisibleRange({ from: newMin, to: newMax });
+              forceUpdate();
+            }
+          }
+        }
+      }
+    };
+
+    const handleDblClick = (e: MouseEvent) => {
+      if (containerEl) {
+        const rect = containerEl.getBoundingClientRect();
+        const priceScaleWidth = chart.priceScale('right').width() || 75;
+        if (e.clientX >= (rect.right - priceScaleWidth)) {
+          chart.priceScale('right').setAutoScale(true);
+          forceUpdate();
+        }
+      }
     };
 
     const containerEl = containerRef.current;
     if (containerEl) {
       containerEl.addEventListener('mousedown', handleMouseDown);
       window.addEventListener('mouseup', handleMouseUp);
-      containerEl.addEventListener('wheel', handleWheel, { passive: true });
+      containerEl.addEventListener('wheel', handleWheel, { passive: false });
       containerEl.addEventListener('touchstart', handleMouseDown, { passive: true });
       window.addEventListener('touchend', handleMouseUp, { passive: true });
+      containerEl.addEventListener('dblclick', handleDblClick);
     }
 
     const timeScale = chart.timeScale();
@@ -268,6 +331,7 @@ export const TradingViewChart: React.FC = () => {
         containerEl.removeEventListener('wheel', handleWheel);
         containerEl.removeEventListener('touchstart', handleMouseDown);
         window.removeEventListener('touchend', handleMouseUp);
+        containerEl.removeEventListener('dblclick', handleDblClick);
       }
       timeScale.unsubscribeVisibleLogicalRangeChange(handleRangeChange);
       timeScale.unsubscribeVisibleTimeRangeChange(handleRangeChange);
@@ -311,6 +375,19 @@ export const TradingViewChart: React.FC = () => {
       },
     });
   }, [themeSettings, timezone]);
+
+  // Update price precision when symbol changes
+  useEffect(() => {
+    if (!candleSeriesRef.current) return;
+    const symInfo = SUPPORTED_SYMBOLS[symbol as SupportedSymbol] || SUPPORTED_SYMBOLS['BTCUSDT.P'];
+    candleSeriesRef.current.applyOptions({
+      priceFormat: {
+        type: 'price',
+        precision: symInfo.pricePrecision,
+        minMove: symInfo.minMove,
+      },
+    });
+  }, [symbol]);
 
   // Update candle colors
   useEffect(() => {
@@ -430,7 +507,7 @@ export const TradingViewChart: React.FC = () => {
         lineWidth: 2,
         lineStyle: LineStyle.Solid,
         axisLabelVisible: true,
-        title: `${side.toUpperCase()} ${size} BTC @ ${formatPrice(entryPrice)}`,
+        title: `${side.toUpperCase()} ${size} ${symbolInfo.baseAsset} @ ${formatPrice(entryPrice, symbolInfo.precision)}`,
       });
 
       if (stopLoss !== null) {
@@ -495,7 +572,15 @@ export const TradingViewChart: React.FC = () => {
     // Only show preview if NO active position is currently open
     if (!activePosition && orderSetup.enabled) {
       const { side, orderType: oType, entryPrice, stopLoss, takeProfit } = orderSetup;
-      const riskCalc = calculateRiskPosition(balance, riskSettings, entryPrice, stopLoss, takeProfit);
+      const riskCalc = calculateRiskPosition(
+        balance,
+        riskSettings,
+        entryPrice,
+        stopLoss,
+        takeProfit,
+        symbolInfo.lotPrecision,
+        symbolInfo.baseAsset
+      );
 
       // 1. Preview Entry Line
       previewEntryLineRef.current = series.createPriceLine({
@@ -504,7 +589,7 @@ export const TradingViewChart: React.FC = () => {
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `ПРЕДПРОСМОТР ВХОДА (${side.toUpperCase()} ${riskCalc.sizeBtc} BTC)`,
+        title: `ПРЕДПРОСМОТР ВХОДА (${side.toUpperCase()} ${riskCalc.sizeAsset} ${symbolInfo.baseAsset})`,
       });
 
       // 2. Preview Stop Loss Line
@@ -535,7 +620,7 @@ export const TradingViewChart: React.FC = () => {
       if (previewSlLineRef.current) series.removePriceLine(previewSlLineRef.current);
       if (previewTpLineRef.current) series.removePriceLine(previewTpLineRef.current);
     };
-  }, [activePosition, orderSetup, balance, riskSettings]);
+  }, [activePosition, orderSetup, balance, riskSettings, symbolInfo]);
 
   // Update Limit Order Price Lines
   useEffect(() => {
@@ -556,7 +641,7 @@ export const TradingViewChart: React.FC = () => {
         lineWidth: 2,
         lineStyle: LineStyle.Dotted,
         axisLabelVisible: true,
-        title: `LIMIT ${order.side.toUpperCase()}: ${formatPrice(order.limitPrice)} (${order.size} BTC)`,
+        title: `LIMIT ${order.side.toUpperCase()}: ${formatPrice(order.limitPrice, symbolInfo.precision)} (${order.size} ${symbolInfo.baseAsset})`,
       });
       lines.push(limitLine);
 
@@ -567,7 +652,7 @@ export const TradingViewChart: React.FC = () => {
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: `LIMIT SL: ${formatPrice(order.stopLoss)}`,
+          title: `LIMIT SL: ${formatPrice(order.stopLoss, symbolInfo.precision)}`,
         });
         lines.push(slLine);
       }
@@ -579,7 +664,7 @@ export const TradingViewChart: React.FC = () => {
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: `LIMIT TP: ${formatPrice(order.takeProfit)}`,
+          title: `LIMIT TP: ${formatPrice(order.takeProfit, symbolInfo.precision)}`,
         });
         lines.push(tpLine);
       }
@@ -595,7 +680,7 @@ export const TradingViewChart: React.FC = () => {
       });
       limitLinesMapRef.current.clear();
     };
-  }, [limitOrders]);
+  }, [limitOrders, symbolInfo]);
 
   // Drag-and-drop mouse handlers for active positions, limit orders, and pre-trade preview
   useEffect(() => {
@@ -690,9 +775,11 @@ export const TradingViewChart: React.FC = () => {
       riskSettings,
       orderSetup.entryPrice,
       orderSetup.stopLoss,
-      orderSetup.takeProfit
+      orderSetup.takeProfit,
+      symbolInfo.lotPrecision,
+      symbolInfo.baseAsset
     );
-  }, [balance, riskSettings, orderSetup]);
+  }, [balance, riskSettings, orderSetup, symbolInfo]);
 
   const currentTzObj = TIMEZONE_OPTIONS.find((t) => t.id === timezone) || TIMEZONE_OPTIONS[0];
 
@@ -740,7 +827,7 @@ export const TradingViewChart: React.FC = () => {
               >
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#f23645]/95 hover:bg-[#f23645] text-white text-[11px] font-mono font-bold rounded-lg shadow-xl border border-white/30 transition-all group-hover:scale-105">
                   <GripVertical className="w-3.5 h-3.5 opacity-80" />
-                  <span>SL: ${formatPrice(orderSetup.stopLoss)}</span>
+                  <span>SL: ${formatPrice(orderSetup.stopLoss, symbolInfo.precision)}</span>
                   <span className="text-[10px] opacity-80 pl-1 border-l border-white/30">
                     -${prevCalc.riskUsd} (-{riskSettings.riskPercent}%)
                   </span>
@@ -774,7 +861,7 @@ export const TradingViewChart: React.FC = () => {
               >
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#089981]/95 hover:bg-[#089981] text-white text-[11px] font-mono font-bold rounded-lg shadow-xl border border-white/30 transition-all group-hover:scale-105">
                   <GripVertical className="w-3.5 h-3.5 opacity-80" />
-                  <span>TP: ${formatPrice(orderSetup.takeProfit)}</span>
+                  <span>TP: ${formatPrice(orderSetup.takeProfit, symbolInfo.precision)}</span>
                   <span className="text-[10px] opacity-80 pl-1 border-l border-white/30">
                     +${prevCalc.potentialProfitUsd} ({prevCalc.riskRewardRatio}R)
                   </span>
@@ -809,7 +896,7 @@ export const TradingViewChart: React.FC = () => {
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#f7a600]/95 hover:bg-[#f7a600] text-black text-[11px] font-mono font-bold rounded-lg shadow-xl border border-black/30 transition-all group-hover:scale-105">
                   <GripVertical className="w-3.5 h-3.5 opacity-80" />
                   <span>
-                    ВХОД LIMIT: ${formatPrice(orderSetup.entryPrice)} ({prevCalc.sizeBtc} BTC)
+                    ВХОД LIMIT: ${formatPrice(orderSetup.entryPrice, symbolInfo.precision)} ({prevCalc.sizeAsset} {symbolInfo.baseAsset})
                   </span>
                   <span className="text-[9px] bg-black/20 px-1 py-0.2 rounded font-sans uppercase">
                     Тянуть
@@ -845,7 +932,7 @@ export const TradingViewChart: React.FC = () => {
           >
             <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#f23645]/90 hover:bg-[#f23645] text-white text-[11px] font-mono font-bold rounded-lg shadow-lg border border-white/20 transition-all group-hover:scale-105">
               <GripVertical className="w-3.5 h-3.5 opacity-80" />
-              <span>SL: ${formatPrice(activePosition.stopLoss)}</span>
+              <span>SL: ${formatPrice(activePosition.stopLoss, symbolInfo.precision)}</span>
               <span className="text-[10px] opacity-80 pl-1 border-l border-white/30">
                 -${(Math.abs(activePosition.entryPrice - activePosition.stopLoss) * activePosition.size).toFixed(1)}
               </span>
@@ -865,7 +952,7 @@ export const TradingViewChart: React.FC = () => {
           >
             <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#089981]/90 hover:bg-[#089981] text-white text-[11px] font-mono font-bold rounded-lg shadow-lg border border-white/20 transition-all group-hover:scale-105">
               <GripVertical className="w-3.5 h-3.5 opacity-80" />
-              <span>TP: ${formatPrice(activePosition.takeProfit)}</span>
+              <span>TP: ${formatPrice(activePosition.takeProfit, symbolInfo.precision)}</span>
               <span className="text-[10px] opacity-80 pl-1 border-l border-white/30">
                 +${(Math.abs(activePosition.takeProfit - activePosition.entryPrice) * activePosition.size).toFixed(1)}
               </span>
@@ -897,7 +984,7 @@ export const TradingViewChart: React.FC = () => {
                     <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#f7a600]/95 hover:bg-[#f7a600] text-black text-[11px] font-mono font-bold rounded-lg shadow-lg border border-black/20 transition-all group-hover:scale-105">
                       <GripVertical className="w-3.5 h-3.5 opacity-70" />
                       <span>
-                        LIMIT {order.side.toUpperCase()}: ${formatPrice(order.limitPrice)}
+                        LIMIT {order.side.toUpperCase()}: ${formatPrice(order.limitPrice, symbolInfo.precision)}
                       </span>
                       <button
                         onClick={(e) => {
@@ -925,7 +1012,7 @@ export const TradingViewChart: React.FC = () => {
                   >
                     <div className="flex items-center gap-1 px-2 py-0.5 bg-[#f23645]/80 hover:bg-[#f23645] text-white text-[10px] font-mono font-semibold rounded shadow border border-white/20">
                       <GripVertical className="w-3 h-3 opacity-70" />
-                      <span>SL: ${formatPrice(order.stopLoss)}</span>
+                      <span>SL: ${formatPrice(order.stopLoss, symbolInfo.precision)}</span>
                     </div>
                   </div>
                 )}
@@ -942,7 +1029,7 @@ export const TradingViewChart: React.FC = () => {
                   >
                     <div className="flex items-center gap-1 px-2 py-0.5 bg-[#089981]/80 hover:bg-[#089981] text-white text-[10px] font-mono font-semibold rounded shadow border border-white/20">
                       <GripVertical className="w-3 h-3 opacity-70" />
-                      <span>TP: ${formatPrice(order.takeProfit)}</span>
+                      <span>TP: ${formatPrice(order.takeProfit, symbolInfo.precision)}</span>
                     </div>
                   </div>
                 )}

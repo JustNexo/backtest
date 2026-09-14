@@ -3,7 +3,7 @@ import { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { useChart } from '../../context/ChartContext';
 import { DrawingObject, DrawingPoint } from '../../types/chart';
 import { formatPrice } from '../../utils/formatters';
-import { Trash2, Copy, Check } from 'lucide-react';
+import { Trash2, Copy, Check, X } from 'lucide-react';
 
 interface DrawingLayerProps {
   chart: IChartApi | null;
@@ -103,10 +103,16 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
   const [startPoint, setStartPoint] = useState<DrawingPoint | null>(null);
   const [currentMousePoint, setCurrentMousePoint] = useState<DrawingPoint | null>(null);
 
+  // Interaction guards to prevent premature deselection
+  const preventDeselectRef = useRef(false);
+  const wasDraggingRef = useRef(false);
+  const isMouseDownForCreationRef = useRef(false);
+  const creationStartScreenRef = useRef<{ x: number; y: number } | null>(null);
+
   // Force re-render on chart pan/zoom
   const [, setTick] = useState(0);
 
-  // Register viewport center getter so toolbar buttons place objects right in the user's viewport center
+  // Register viewport center getter
   useEffect(() => {
     registerViewportCenterGetter(() => {
       if (!chart || !candleSeries || !containerRef.current) return null;
@@ -144,10 +150,13 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     };
   }, [chart, candleSeries, containerRef, visibleCandles, timeframe, registerViewportCenterGetter]);
 
-  // Click on empty chart to deselect active drawing
+  // Click on empty chart to deselect active drawing (guarded so it NEVER deselects when interacting with a drawing or toolbar!)
   useEffect(() => {
     if (!chart) return;
     const handleClick = () => {
+      if (preventDeselectRef.current || wasDraggingRef.current) {
+        return;
+      }
       if (activeTool === 'cursor') {
         setSelectedDrawingId(null);
       }
@@ -249,52 +258,63 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     [chart, candleSeries, visibleCandles, timeframe]
   );
 
-  // Handle drawing creation clicks
-  const handleLayerClick = (e: React.MouseEvent) => {
-    if (activeTool === 'cursor') {
-      // Clicked on empty canvas background -> deselect
-      setSelectedDrawingId(null);
-      return;
-    }
+  const finalizeCreation = useCallback(
+    (p1: DrawingPoint, p2: DrawingPoint) => {
+      preventDeselectRef.current = true;
+      const newId = `${activeTool}_${Date.now()}`;
 
-    const pt = getPointFromEvent(e);
-    if (!pt) return;
-
-    if (activeTool === 'horizontal') {
-      const newId = `horz_${Date.now()}`;
-      addDrawing({
-        id: newId,
-        type: 'horizontal',
-        points: [pt],
-        color: '#f7a600',
-        lineWidth: 2,
-      });
-      setActiveTool('cursor');
-      setSelectedDrawingId(newId);
-      setStartPoint(null);
-      setCurrentMousePoint(null);
-    } else if (activeTool === 'rectangle' || activeTool === 'trendline') {
-      if (!startPoint) {
-        // First click
-        setStartPoint(pt);
-      } else {
-        // Second click -> finalize drawing and select it
-        const newId = `${activeTool}_${Date.now()}`;
+      if (activeTool === 'horizontal') {
         addDrawing({
           id: newId,
-          type: activeTool,
-          points: [startPoint, pt],
-          color: activeTool === 'rectangle' ? '#2962ff' : '#089981',
-          fillColor: activeTool === 'rectangle' ? 'rgba(41, 98, 255, 0.22)' : undefined,
-          fillOpacity: activeTool === 'rectangle' ? 0.22 : undefined,
+          type: 'horizontal',
+          points: [p1],
+          color: '#f7a600',
+          lineWidth: 2,
+        });
+      } else if (activeTool === 'rectangle') {
+        addDrawing({
+          id: newId,
+          type: 'rectangle',
+          points: [p1, p2],
+          color: '#2962ff',
+          fillColor: 'rgba(41, 98, 255, 0.22)',
+          fillOpacity: 0.22,
           lineWidth: 2,
           lineStyle: 'solid',
         });
-        setStartPoint(null);
-        setCurrentMousePoint(null);
-        setActiveTool('cursor');
-        setSelectedDrawingId(newId);
+      } else if (activeTool === 'trendline') {
+        addDrawing({
+          id: newId,
+          type: 'trendline',
+          points: [p1, p2],
+          color: '#089981',
+          lineWidth: 2,
+        });
       }
+
+      setStartPoint(null);
+      setCurrentMousePoint(null);
+      setActiveTool('cursor');
+      setSelectedDrawingId(newId);
+
+      setTimeout(() => {
+        preventDeselectRef.current = false;
+      }, 300);
+    },
+    [activeTool, addDrawing, setActiveTool, setSelectedDrawingId]
+  );
+
+  const handleMouseDownCreation = (e: React.MouseEvent) => {
+    if (activeTool === 'cursor') return;
+    const pt = getPointFromEvent(e);
+    if (!pt) return;
+
+    isMouseDownForCreationRef.current = true;
+    creationStartScreenRef.current = { x: e.clientX, y: e.clientY };
+
+    if (!startPoint) {
+      setStartPoint(pt);
+      setCurrentMousePoint(pt);
     }
   };
 
@@ -306,6 +326,52 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     }
   };
 
+  const handleMouseUpCreation = (e: React.MouseEvent) => {
+    if (activeTool === 'cursor' || !startPoint) return;
+    const pt = getPointFromEvent(e);
+    if (!pt) return;
+
+    if (creationStartScreenRef.current) {
+      const dx = Math.abs(e.clientX - creationStartScreenRef.current.x);
+      const dy = Math.abs(e.clientY - creationStartScreenRef.current.y);
+      if (dx > 12 || dy > 12) {
+        finalizeCreation(startPoint, pt);
+        isMouseDownForCreationRef.current = false;
+        creationStartScreenRef.current = null;
+        return;
+      }
+    }
+
+    isMouseDownForCreationRef.current = false;
+  };
+
+  // Handle drawing creation clicks
+  const handleLayerClick = (e: React.MouseEvent) => {
+    if (activeTool === 'cursor') {
+      if (!preventDeselectRef.current && !wasDraggingRef.current) {
+        setSelectedDrawingId(null);
+      }
+      return;
+    }
+
+    const pt = getPointFromEvent(e);
+    if (!pt) return;
+
+    if (activeTool === 'horizontal') {
+      finalizeCreation(pt, pt);
+      return;
+    }
+
+    if (!startPoint) {
+      // First click
+      setStartPoint(pt);
+      setCurrentMousePoint(pt);
+    } else {
+      // Second click -> finalize drawing and select it
+      finalizeCreation(startPoint, pt);
+    }
+  };
+
   // Start dragging a handle or the whole drawing
   const handleStartDrag = (
     e: React.MouseEvent,
@@ -314,6 +380,8 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
   ) => {
     e.stopPropagation();
     e.preventDefault();
+    preventDeselectRef.current = true;
+    wasDraggingRef.current = false;
     setSelectedDrawingId(drawingId);
 
     const pt = getPointFromEvent(e);
@@ -437,6 +505,10 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
 
     const handleMouseUp = () => {
       setDragState(null);
+      setTimeout(() => {
+        preventDeselectRef.current = false;
+        wasDraggingRef.current = false;
+      }, 250);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -537,17 +609,19 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
   return (
     <div
       onClick={handleLayerClick}
+      onMouseDown={handleMouseDownCreation}
       onMouseMove={handleMouseMoveCreation}
+      onMouseUp={handleMouseUpCreation}
       className={`absolute inset-0 z-20 ${
         isCreating ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'
       }`}
     >
       {/* Top Banner when in drawing mode */}
       {isCreating && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-auto bg-[#1e222d]/95 backdrop-blur-md border border-tv-blue px-3.5 py-1.5 rounded-xl shadow-2xl flex items-center gap-3 text-xs">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-auto bg-[#1e222d]/95 backdrop-blur-md border border-tv-blue px-4 py-2 rounded-xl shadow-2xl flex items-center gap-3 text-xs">
           <span className="text-tv-blue font-semibold">
-            {activeTool === 'rectangle' && 'Режим рисования: Прямоугольник (кликните 2 точки на графике)'}
-            {activeTool === 'trendline' && 'Режим рисования: Трендовая линия (кликните 2 точки на графике)'}
+            {activeTool === 'rectangle' && 'Режим рисования: Прямоугольник (кликните 2 точки или протяните мышкой)'}
+            {activeTool === 'trendline' && 'Режим рисования: Трендовая линия (кликните 2 точки или протяните мышкой)'}
             {activeTool === 'horizontal' && 'Режим рисования: Горизонтальный уровень (кликните по уровню цены)'}
           </span>
           <button
@@ -557,7 +631,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
               setStartPoint(null);
               setCurrentMousePoint(null);
             }}
-            className="px-2 py-0.5 bg-[#2a2e39] hover:bg-[#363a45] text-white rounded text-[11px] font-medium transition-colors"
+            className="px-2.5 py-0.5 bg-[#2a2e39] hover:bg-[#363a45] text-white rounded text-[11px] font-medium transition-colors"
           >
             Отмена (Esc)
           </button>
@@ -601,7 +675,16 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   stroke={drawing.color || '#2962ff'}
                   strokeWidth={drawing.lineWidth || 2}
                   strokeDasharray={drawing.lineStyle === 'dashed' ? '6 3' : undefined}
-                  onMouseDown={(e) => handleStartDrag(e, drawing.id, 'move')}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    handleStartDrag(e, drawing.id, 'move');
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    setSelectedDrawingId(drawing.id);
+                  }}
                   className={`pointer-events-auto transition-colors ${
                     isSelected ? 'cursor-move' : 'cursor-pointer hover:opacity-90'
                   }`}
@@ -726,7 +809,16 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   stroke="transparent"
                   strokeWidth="14"
                   pointerEvents="all"
-                  onMouseDown={(e) => handleStartDrag(e, drawing.id, 'horz_price')}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    handleStartDrag(e, drawing.id, 'horz_price');
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    setSelectedDrawingId(drawing.id);
+                  }}
                   className="cursor-ns-resize pointer-events-auto"
                 />
                 {/* Visible Line */}
@@ -743,7 +835,16 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
 
                 {/* Level badge */}
                 <g
-                  onMouseDown={(e) => handleStartDrag(e, drawing.id, 'horz_price')}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    handleStartDrag(e, drawing.id, 'horz_price');
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    setSelectedDrawingId(drawing.id);
+                  }}
                   className="cursor-ns-resize pointer-events-auto"
                   transform={`translate(60, ${p.y - 10})`}
                 >
@@ -792,7 +893,16 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   stroke="transparent"
                   strokeWidth="16"
                   pointerEvents="all"
-                  onMouseDown={(e) => handleStartDrag(e, drawing.id, 'move')}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    handleStartDrag(e, drawing.id, 'move');
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    setSelectedDrawingId(drawing.id);
+                  }}
                   className="cursor-move pointer-events-auto"
                 />
                 {/* Visible Line */}
@@ -907,7 +1017,14 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
             top: `${selectedToolbarPos.y}px`,
           }}
           className="absolute pointer-events-auto z-40 bg-[#1e222d]/95 backdrop-blur-md border border-[#2a2e39] rounded-xl shadow-2xl p-1.5 flex items-center gap-2 select-none"
-          onMouseDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            preventDeselectRef.current = true;
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            preventDeselectRef.current = true;
+          }}
         >
           {/* Color Palette Dots */}
           <div className="flex items-center gap-1 pr-1.5 border-r border-[#2a2e39]">
@@ -1016,6 +1133,18 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
             className="p-1.5 text-tv-red/80 hover:text-tv-red hover:bg-tv-red/10 rounded-lg transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Close / Deselect Button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedDrawingId(null);
+            }}
+            title="Снять выделение (Esc)"
+            className="p-1.5 text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover rounded-lg transition-colors border-l border-[#2a2e39] ml-0.5"
+          >
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}

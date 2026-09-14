@@ -174,7 +174,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Pre-trade Order Setup (Draggable SL/TP on chart before opening position)
   const [orderSetup, setOrderSetup] = useState<OrderSetupPreview>({
-    enabled: true,
+    enabled: false,
     side: 'long',
     orderType: 'market',
     entryPrice: 65000,

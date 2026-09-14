@@ -684,6 +684,16 @@ export const TradingViewChart: React.FC = () => {
                   <span className="text-[9px] bg-black/30 px-1 py-0.2 rounded font-sans uppercase">
                     Тянуть
                   </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      updateOrderSetup({ enabled: false });
+                    }}
+                    title="Скрыть предпросмотр ордера"
+                    className="p-0.5 hover:bg-black/40 rounded ml-1 transition-colors"
+                  >
+                    <X className="w-3 h-3 text-white" />
+                  </button>
                 </div>
               </div>
             )}
@@ -708,6 +718,16 @@ export const TradingViewChart: React.FC = () => {
                   <span className="text-[9px] bg-black/30 px-1 py-0.2 rounded font-sans uppercase">
                     Тянуть
                   </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      updateOrderSetup({ enabled: false });
+                    }}
+                    title="Скрыть предпросмотр ордера"
+                    className="p-0.5 hover:bg-black/40 rounded ml-1 transition-colors"
+                  >
+                    <X className="w-3 h-3 text-white" />
+                  </button>
                 </div>
               </div>
             )}
@@ -731,6 +751,16 @@ export const TradingViewChart: React.FC = () => {
                   <span className="text-[9px] bg-black/20 px-1 py-0.2 rounded font-sans uppercase">
                     Тянуть
                   </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      updateOrderSetup({ enabled: false });
+                    }}
+                    title="Скрыть предпросмотр ордера"
+                    className="p-0.5 hover:bg-black/40 rounded ml-1 transition-colors"
+                  >
+                    <X className="w-3 h-3 text-black" />
+                  </button>
                 </div>
               </div>
             )}

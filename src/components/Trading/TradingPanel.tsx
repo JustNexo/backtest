@@ -94,10 +94,12 @@ export const TradingPanel: React.FC = () => {
   const handleExecuteTrade = (side: 'long' | 'short') => {
     if (orderSetup.orderType === 'market') {
       executeTrade(side, orderSetup.stopLoss, orderSetup.takeProfit);
+      updateOrderSetup({ enabled: false });
       setActiveTab('position');
     } else {
       const success = addLimitOrder(side, orderSetup.entryPrice, orderSetup.stopLoss, orderSetup.takeProfit);
       if (success) {
+        updateOrderSetup({ enabled: false });
         setActiveTab('orders');
       }
     }

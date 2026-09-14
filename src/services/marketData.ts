@@ -164,8 +164,46 @@ function candlesContainTime(candles: Candle[], targetTs: number, timeframe: Time
 }
 
 /**
+ * Quick fetch of the latest candles for real-time polling
+ */
+export async function fetchLatestCandles(timeframe: Timeframe, limit: number = 3): Promise<Candle[]> {
+  try {
+    const fresh = await fetchGateIOCandles(timeframe, undefined, limit);
+    if (fresh.length > 0) return fresh;
+  } catch {
+    // Gate.io error, try OKX
+  }
+
+  try {
+    const bar = OKX_BAR_MAP[timeframe] || '1H';
+    const okxUrl = `https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=${bar}&limit=${limit}`;
+    const res = await fetch(okxUrl);
+    if (res.ok) {
+      const json = await res.json();
+      const rows: string[][] = json.data || [];
+      return sanitizeCandles(
+        rows.map((r) => ({
+          time: Math.floor(Number(r[0]) / 1000),
+          open: Number(r[1]),
+          high: Number(r[2]),
+          low: Number(r[3]),
+          close: Number(r[4]),
+          volume: Number(r[5] || 0),
+        }))
+      );
+    }
+  } catch {
+    // ignore
+  }
+
+  return [];
+}
+
+/**
  * Primary function to get candles for a timeframe.
- * Checks memory cache -> IndexedDB -> Seed Data -> OKX / Gate.io API
+ * In Live Mode (!targetTimestamp): ALWAYS fetches fresh live candles from Gate.io/OKX
+ * and merges with existing historical cache so the user sees real-time market data.
+ * In Replay Mode (targetTimestamp is set): Checks memory/IDB cache first, then fetches historical range.
  */
 export async function getCandlesForTimeframe(
   timeframe: Timeframe,
@@ -173,97 +211,159 @@ export async function getCandlesForTimeframe(
 ): Promise<Candle[]> {
   const cacheKey = `btcusdt_p_${timeframe}`;
   const targetTs = options?.targetTimestamp;
+  const now = Math.floor(Date.now() / 1000);
+  const tfSec = getIntervalSeconds(timeframe);
 
-  // 1. If targetTimestamp is requested (e.g. in Replay at 2024), check if memory cache covers it
-  if (targetTs && memoryCache[timeframe] && candlesContainTime(memoryCache[timeframe]!, targetTs, timeframe)) {
-    return memoryCache[timeframe]!;
-  }
+  // =========================================================================
+  // 1. REPLAY MODE (targetTimestamp specified by user)
+  // =========================================================================
+  if (targetTs) {
+    // Check if memory cache covers targetTs
+    if (memoryCache[timeframe] && candlesContainTime(memoryCache[timeframe]!, targetTs, timeframe)) {
+      return memoryCache[timeframe]!;
+    }
 
-  // If no targetTimestamp requested, return from memory cache if populated
-  if (!targetTs && !options?.forceFetch && memoryCache[timeframe] && memoryCache[timeframe]!.length > 100) {
-    return memoryCache[timeframe]!;
-  }
-
-  // 2. Try IndexedDB
-  try {
-    const cachedDb = await get<Candle[]>(cacheKey);
-    if (cachedDb && cachedDb.length > 50) {
-      if (!targetTs || candlesContainTime(cachedDb, targetTs, timeframe)) {
+    // Check IndexedDB
+    try {
+      const cachedDb = await get<Candle[]>(cacheKey);
+      if (cachedDb && cachedDb.length > 50 && candlesContainTime(cachedDb, targetTs, timeframe)) {
         memoryCache[timeframe] = cachedDb;
         return cachedDb;
       }
+    } catch (e) {
+      console.warn('IndexedDB read error:', e);
     }
-  } catch (e) {
-    console.warn('IndexedDB read error:', e);
-  }
 
-  // 3. If targetTimestamp is deep in history (e.g. more than 30 days ago) or requested explicitly
-  const now = Math.floor(Date.now() / 1000);
-  if (targetTs && (now - targetTs > 25 * 86400)) {
+    // If target is deep history (> 25 days ago), use OKX history candles
+    if (now - targetTs > 25 * 86400) {
+      try {
+        const okxCandles = await fetchOKXCandlesAround(timeframe, targetTs, 350);
+        if (okxCandles.length > 0) {
+          const existing = memoryCache[timeframe] || [];
+          const merged = sanitizeCandles([...existing, ...okxCandles]);
+          memoryCache[timeframe] = merged;
+          set(cacheKey, merged).catch(console.warn);
+          return merged;
+        }
+      } catch (err) {
+        console.warn('OKX historical fetch error:', err);
+      }
+    }
+
+    // Try Gate.io with buffer
     try {
-      const okxCandles = await fetchOKXCandlesAround(timeframe, targetTs, 350);
-      if (okxCandles.length > 0) {
+      const buffer = tfSec * 200;
+      const gateData = await fetchGateIOCandles(timeframe, targetTs + buffer, 1000);
+      if (gateData.length > 0 && candlesContainTime(gateData, targetTs, timeframe)) {
         const existing = memoryCache[timeframe] || [];
-        const merged = sanitizeCandles([...existing, ...okxCandles]);
+        const merged = sanitizeCandles([...existing, ...gateData]);
         memoryCache[timeframe] = merged;
         set(cacheKey, merged).catch(console.warn);
         return merged;
       }
     } catch (err) {
-      console.warn('OKX historical fetch error:', err);
+      console.warn('Gate.io replay fetch error:', err);
+    }
+
+    // Try Seed Data
+    try {
+      const seed = await loadSeedData();
+      if (seed[timeframe] && seed[timeframe].length > 0) {
+        const sanitized = sanitizeCandles(seed[timeframe]);
+        if (candlesContainTime(sanitized, targetTs, timeframe)) {
+          memoryCache[timeframe] = sanitized;
+          return sanitized;
+        }
+      }
+    } catch (e) {
+      console.warn('Seed fallback error:', e);
+    }
+
+    return generateFallbackCandles(timeframe, targetTs);
+  }
+
+  // =========================================================================
+  // 2. LIVE MODE (no targetTimestamp): ALWAYS PREFER FRESH REAL-TIME DATA!
+  // =========================================================================
+  let existingDb: Candle[] = memoryCache[timeframe] || [];
+  if (existingDb.length === 0) {
+    try {
+      const cached = await get<Candle[]>(cacheKey);
+      if (cached && cached.length > 0) {
+        existingDb = cached;
+      }
+    } catch (e) {
+      console.warn('IndexedDB read error:', e);
     }
   }
 
-  // 4. Try Seed Data
+  const lastCandleTime = existingDb.length > 0 ? existingDb[existingDb.length - 1].time : 0;
+  // If existing cached data is already very fresh (less than 90s old or less than tfSec), reuse
+  const isCacheStillFresh = existingDb.length > 50 && (now - lastCandleTime) < Math.min(tfSec, 90);
+  if (isCacheStillFresh && !options?.forceFetch) {
+    memoryCache[timeframe] = existingDb;
+    return existingDb;
+  }
+
+  // 2a. Fetch fresh candles from Gate.io (primary, up to 1000 candles)
+  try {
+    const fresh = await fetchGateIOCandles(timeframe, undefined, 1000);
+    if (fresh.length > 0) {
+      const merged = sanitizeCandles([...existingDb, ...fresh]);
+      memoryCache[timeframe] = merged;
+      set(cacheKey, merged).catch(console.warn);
+      return merged;
+    }
+  } catch (err) {
+    console.warn('Gate.io live fetch failed, trying OKX live fallback:', err);
+  }
+
+  // 2b. Fallback to OKX live candles
+  try {
+    const bar = OKX_BAR_MAP[timeframe] || '1H';
+    const okxUrl = `https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=${bar}&limit=300`;
+    const res = await fetch(okxUrl);
+    if (res.ok) {
+      const json = await res.json();
+      const rows: string[][] = json.data || [];
+      const okxCandles: Candle[] = rows.map((r) => ({
+        time: Math.floor(Number(r[0]) / 1000),
+        open: Number(r[1]),
+        high: Number(r[2]),
+        low: Number(r[3]),
+        close: Number(r[4]),
+        volume: Number(r[5] || 0),
+      }));
+      if (okxCandles.length > 0) {
+        const merged = sanitizeCandles([...existingDb, ...okxCandles]);
+        memoryCache[timeframe] = merged;
+        set(cacheKey, merged).catch(console.warn);
+        return merged;
+      }
+    }
+  } catch (err) {
+    console.warn('OKX live fallback failed:', err);
+  }
+
+  // 2c. If network failed, return existing cached data if available
+  if (existingDb.length > 0) {
+    memoryCache[timeframe] = existingDb;
+    return existingDb;
+  }
+
+  // 2d. Try seed data
   try {
     const seed = await loadSeedData();
     if (seed[timeframe] && seed[timeframe].length > 0) {
       const sanitized = sanitizeCandles(seed[timeframe]);
-      if (!targetTs || candlesContainTime(sanitized, targetTs, timeframe)) {
-        memoryCache[timeframe] = sanitized;
-        set(cacheKey, sanitized).catch(console.warn);
-        return sanitized;
-      }
+      memoryCache[timeframe] = sanitized;
+      return sanitized;
     }
   } catch (e) {
     console.warn('Seed data fallback error:', e);
   }
 
-  // 5. Fetch from Gate.io (recent) or OKX (historical)
-  try {
-    if (targetTs && now - targetTs > 25 * 86400) {
-      const okxData = await fetchOKXCandlesAround(timeframe, targetTs, 300);
-      if (okxData.length > 0) {
-        memoryCache[timeframe] = okxData;
-        set(cacheKey, okxData).catch(console.warn);
-        return okxData;
-      }
-    } else {
-      const fresh = await fetchGateIOCandles(timeframe, targetTs || undefined, 1000);
-      if (fresh.length > 0) {
-        memoryCache[timeframe] = fresh;
-        set(cacheKey, fresh).catch(console.warn);
-        return fresh;
-      }
-    }
-  } catch (err) {
-    console.warn('Live fetch error, trying fallback:', err);
-  }
-
-  // 6. Last resort: try OKX directly
-  if (targetTs) {
-    try {
-      const okxData = await fetchOKXCandlesAround(timeframe, targetTs, 300);
-      if (okxData.length > 0) {
-        memoryCache[timeframe] = okxData;
-        return okxData;
-      }
-    } catch (e) {
-      console.warn('Final OKX fallback failed:', e);
-    }
-  }
-
-  return generateFallbackCandles(timeframe, targetTs ? targetTs : undefined);
+  return generateFallbackCandles(timeframe);
 }
 
 /**

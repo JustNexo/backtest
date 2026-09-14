@@ -20,6 +20,7 @@ import {
 } from '../types/trading';
 import {
   fetchHistoricalDateRange,
+  fetchLatestCandles,
   getCandlesForTimeframe,
   sanitizeCandles,
 } from '../services/marketData';
@@ -331,6 +332,36 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     [feeSettings]
   );
+
+  // Live polling: updates the latest candle every 5 seconds when in live mode (not in replay)
+  useEffect(() => {
+    if (replay.isActive || isLoading) return;
+
+    let isMounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const latest = await fetchLatestCandles(timeframe, 3);
+        if (!isMounted || latest.length === 0) return;
+
+        setAllCandles((prevCandles) => {
+          if (prevCandles.length === 0) return prevCandles;
+          const merged = sanitizeCandles([...prevCandles, ...latest]);
+          const lastCandle = merged[merged.length - 1];
+          if (lastCandle) {
+            processCandleTick(lastCandle);
+          }
+          return merged;
+        });
+      } catch {
+        // Silently catch background polling errors
+      }
+    }, 5000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [timeframe, replay.isActive, isLoading, processCandleTick]);
 
   // Replay Actions
   const startReplaySelection = useCallback(() => {

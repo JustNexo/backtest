@@ -194,9 +194,59 @@ export const TradingViewChart: React.FC = () => {
     setChartInstance(chart);
     setCandleSeriesInstance(candleSeries);
 
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+    // Continuous 60 FPS synchronization for trading badges during gestures (wheel zoom, canvas drag, price scale drag)
+    let rafId: number | null = null;
+    let wheelTimer: any = null;
+
+    const tickFrame = () => {
       forceUpdate();
-    });
+      rafId = requestAnimationFrame(tickFrame);
+    };
+
+    const startActiveSync = () => {
+      if (rafId === null) {
+        rafId = requestAnimationFrame(tickFrame);
+      }
+    };
+
+    const stopActiveSync = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    };
+
+    const handleMouseDown = () => {
+      startActiveSync();
+    };
+
+    const handleMouseUp = () => {
+      stopActiveSync();
+      forceUpdate();
+    };
+
+    const handleWheel = () => {
+      startActiveSync();
+      if (wheelTimer) clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => {
+        stopActiveSync();
+        forceUpdate();
+      }, 300);
+    };
+
+    const containerEl = containerRef.current;
+    if (containerEl) {
+      containerEl.addEventListener('mousedown', handleMouseDown);
+      window.addEventListener('mouseup', handleMouseUp);
+      containerEl.addEventListener('wheel', handleWheel, { passive: true });
+      containerEl.addEventListener('touchstart', handleMouseDown, { passive: true });
+      window.addEventListener('touchend', handleMouseUp, { passive: true });
+    }
+
+    const timeScale = chart.timeScale();
+    const handleRangeChange = () => forceUpdate();
+    timeScale.subscribeVisibleLogicalRangeChange(handleRangeChange);
+    timeScale.subscribeVisibleTimeRangeChange(handleRangeChange);
 
     const resizeObserver = new ResizeObserver((entries) => {
       if (!entries || entries.length === 0) return;
@@ -205,9 +255,22 @@ export const TradingViewChart: React.FC = () => {
       forceUpdate();
     });
 
-    resizeObserver.observe(containerRef.current);
+    if (containerEl) {
+      resizeObserver.observe(containerEl);
+    }
 
     return () => {
+      stopActiveSync();
+      if (wheelTimer) clearTimeout(wheelTimer);
+      if (containerEl) {
+        containerEl.removeEventListener('mousedown', handleMouseDown);
+        window.removeEventListener('mouseup', handleMouseUp);
+        containerEl.removeEventListener('wheel', handleWheel);
+        containerEl.removeEventListener('touchstart', handleMouseDown);
+        window.removeEventListener('touchend', handleMouseUp);
+      }
+      timeScale.unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+      timeScale.unsubscribeVisibleTimeRangeChange(handleRangeChange);
       resizeObserver.disconnect();
       chart.remove();
       chartRef.current = null;

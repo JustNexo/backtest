@@ -167,15 +167,74 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     };
   }, [chart, activeTool, setSelectedDrawingId]);
 
+  // Continuous 60 FPS synchronization during user interactions (zooming wheel, dragging canvas, dragging price/time axes)
   useEffect(() => {
-    if (!chart) return;
-    const timeScale = chart.timeScale();
-    const handleRangeChange = () => setTick((t) => t + 1);
-    timeScale.subscribeVisibleLogicalRangeChange(handleRangeChange);
-    return () => {
-      timeScale.unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+    const container = containerRef.current;
+    if (!container || !chart) return;
+
+    let rafId: number | null = null;
+    let wheelTimer: any = null;
+
+    const tickFrame = () => {
+      setTick((t) => (t + 1) % 1000000);
+      rafId = requestAnimationFrame(tickFrame);
     };
-  }, [chart]);
+
+    const startActiveSync = () => {
+      if (rafId === null) {
+        rafId = requestAnimationFrame(tickFrame);
+      }
+    };
+
+    const stopActiveSync = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    };
+
+    const handleMouseDown = () => {
+      startActiveSync();
+    };
+
+    const handleMouseUp = () => {
+      stopActiveSync();
+      // Final update to guarantee pixel-perfect resting state
+      setTick((t) => (t + 1) % 1000000);
+    };
+
+    const handleWheel = () => {
+      startActiveSync();
+      if (wheelTimer) clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => {
+        stopActiveSync();
+        setTick((t) => (t + 1) % 1000000);
+      }, 300);
+    };
+
+    container.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mouseup', handleMouseUp);
+    container.addEventListener('wheel', handleWheel, { passive: true });
+    container.addEventListener('touchstart', handleMouseDown, { passive: true });
+    window.addEventListener('touchend', handleMouseUp, { passive: true });
+
+    const timeScale = chart.timeScale();
+    const handleRangeChange = () => setTick((t) => (t + 1) % 1000000);
+    timeScale.subscribeVisibleLogicalRangeChange(handleRangeChange);
+    timeScale.subscribeVisibleTimeRangeChange(handleRangeChange);
+
+    return () => {
+      stopActiveSync();
+      if (wheelTimer) clearTimeout(wheelTimer);
+      container.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mouseup', handleMouseUp);
+      container.removeEventListener('wheel', handleWheel);
+      container.removeEventListener('touchstart', handleMouseDown);
+      window.removeEventListener('touchend', handleMouseUp);
+      timeScale.unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+      timeScale.unsubscribeVisibleTimeRangeChange(handleRangeChange);
+    };
+  }, [containerRef, chart]);
 
   // Convert mouse event coordinates to chart time & price (resilient across whole canvas)
   const getPointFromEvent = useCallback(
@@ -212,7 +271,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     [chart, candleSeries, containerRef, visibleCandles, timeframe]
   );
 
-  // Convert chart time & price to pixel coordinates
+  // Convert chart time & price to pixel coordinates (smooth 60 FPS with logical interpolation)
   const getCoordinates = useCallback(
     (p: DrawingPoint): { x: number | null; y: number | null } => {
       if (!chart || !candleSeries) return { x: null, y: null };
@@ -222,29 +281,48 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
       if (rawX !== null) {
         xCoord = Number(rawX);
       } else if (visibleCandles.length > 0) {
-        let low = 0;
-        let high = visibleCandles.length - 1;
-        while (low <= high) {
-          const mid = (low + high) >> 1;
-          if (visibleCandles[mid].time < p.time) {
-            low = mid + 1;
-          } else {
-            high = mid - 1;
-          }
-        }
-        const idx = Math.min(Math.max(0, low), visibleCandles.length - 1);
-        const candle = visibleCandles[idx];
-        if (candle) {
-          const cX = chart.timeScale().timeToCoordinate(candle.time as Time);
-          if (cX !== null) {
-            if (p.time > candle.time) {
-              const tfSec = getTimeframeSeconds(timeframe);
-              const extraBars = (p.time - candle.time) / tfSec;
-              const barSpacing = chart.timeScale().options().barSpacing || 8;
-              xCoord = Number(cX) + extraBars * barSpacing;
+        const first = visibleCandles[0];
+        const last = visibleCandles[visibleCandles.length - 1];
+        const tfSec = getTimeframeSeconds(timeframe);
+
+        let logicalIndex: number;
+        if (p.time >= first.time && p.time <= last.time) {
+          let low = 0;
+          let high = visibleCandles.length - 1;
+          while (low <= high) {
+            const mid = (low + high) >> 1;
+            if (visibleCandles[mid].time < p.time) {
+              low = mid + 1;
             } else {
-              xCoord = Number(cX);
+              high = mid - 1;
             }
+          }
+          const idx = Math.min(Math.max(0, low), visibleCandles.length - 1);
+          const c = visibleCandles[idx];
+          if (c.time === p.time) {
+            logicalIndex = idx;
+          } else if (idx > 0) {
+            const prev = visibleCandles[idx - 1];
+            const span = (c.time - prev.time) || tfSec;
+            logicalIndex = (idx - 1) + (p.time - prev.time) / span;
+          } else {
+            logicalIndex = idx;
+          }
+        } else if (p.time > last.time) {
+          logicalIndex = (visibleCandles.length - 1) + (p.time - last.time) / tfSec;
+        } else {
+          logicalIndex = (p.time - first.time) / tfSec;
+        }
+
+        const coord = chart.timeScale().logicalToCoordinate(logicalIndex as any);
+        if (coord !== null) {
+          xCoord = Number(coord);
+        } else {
+          const cX = chart.timeScale().timeToCoordinate(last.time as Time);
+          if (cX !== null) {
+            const extraBars = (p.time - last.time) / tfSec;
+            const barSpacing = chart.timeScale().options().barSpacing || 8;
+            xCoord = Number(cX) + extraBars * barSpacing;
           }
         }
       }

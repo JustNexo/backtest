@@ -256,12 +256,18 @@ export const TradingViewChart: React.FC = () => {
       // Check if mouse is over the right price scale column
       if (containerEl && candleSeries) {
         const rect = containerEl.getBoundingClientRect();
-        const priceScaleWidth = chart.priceScale('right').width() || 75;
-        const isOverPriceScale = e.clientX >= (rect.right - priceScaleWidth) && e.clientX <= rect.right + 10;
+        const priceScaleWidth = Math.max(65, chart.priceScale('right').width() || 75);
+        const timeScaleHeight = 28;
+        const isOverPriceScale =
+          e.clientX >= (rect.right - priceScaleWidth - 5) &&
+          e.clientX <= rect.right + 10 &&
+          e.clientY >= rect.top &&
+          e.clientY <= (rect.bottom - timeScaleHeight);
 
         if (isOverPriceScale) {
           e.preventDefault();
           e.stopPropagation();
+          e.stopImmediatePropagation();
 
           const rightScale = chart.priceScale('right');
           const currentRange = rightScale.getVisibleRange();
@@ -271,7 +277,7 @@ export const TradingViewChart: React.FC = () => {
 
           if (minPrice === null || maxPrice === null || isNaN(minPrice) || isNaN(maxPrice)) {
             const topPrice = candleSeries.coordinateToPrice(0);
-            const bottomPrice = candleSeries.coordinateToPrice(rect.height);
+            const bottomPrice = candleSeries.coordinateToPrice(rect.height - timeScaleHeight);
             if (topPrice !== null && bottomPrice !== null) {
               minPrice = Math.min(topPrice, bottomPrice);
               maxPrice = Math.max(topPrice, bottomPrice);
@@ -280,8 +286,8 @@ export const TradingViewChart: React.FC = () => {
 
           if (minPrice !== null && maxPrice !== null && maxPrice > minPrice) {
             const delta = e.deltaY;
-            // Exponential zoom factor
-            const factor = Math.exp(delta * 0.0018);
+            // Exponential zoom factor (vertical only)
+            const factor = Math.exp(delta * 0.0016);
 
             const mouseY = e.clientY - rect.top;
             const cursorPrice = candleSeries.coordinateToPrice(mouseY);
@@ -305,8 +311,8 @@ export const TradingViewChart: React.FC = () => {
     const handleDblClick = (e: MouseEvent) => {
       if (containerEl) {
         const rect = containerEl.getBoundingClientRect();
-        const priceScaleWidth = chart.priceScale('right').width() || 75;
-        if (e.clientX >= (rect.right - priceScaleWidth)) {
+        const priceScaleWidth = Math.max(65, chart.priceScale('right').width() || 75);
+        if (e.clientX >= (rect.right - priceScaleWidth - 5)) {
           chart.priceScale('right').setAutoScale(true);
           forceUpdate();
         }
@@ -317,7 +323,7 @@ export const TradingViewChart: React.FC = () => {
     if (containerEl) {
       containerEl.addEventListener('mousedown', handleMouseDown);
       window.addEventListener('mouseup', handleMouseUp);
-      containerEl.addEventListener('wheel', handleWheel, { passive: false });
+      containerEl.addEventListener('wheel', handleWheel, { passive: false, capture: true });
       containerEl.addEventListener('touchstart', handleMouseDown, { passive: true });
       window.addEventListener('touchend', handleMouseUp, { passive: true });
       containerEl.addEventListener('dblclick', handleDblClick);
@@ -345,7 +351,7 @@ export const TradingViewChart: React.FC = () => {
       if (containerEl) {
         containerEl.removeEventListener('mousedown', handleMouseDown);
         window.removeEventListener('mouseup', handleMouseUp);
-        containerEl.removeEventListener('wheel', handleWheel);
+        containerEl.removeEventListener('wheel', handleWheel, true);
         containerEl.removeEventListener('touchstart', handleMouseDown);
         window.removeEventListener('touchend', handleMouseUp);
         containerEl.removeEventListener('dblclick', handleDblClick);

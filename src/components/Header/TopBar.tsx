@@ -82,6 +82,8 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
     exitReplay,
     showFractals,
     setShowFractals,
+    showVolume,
+    toggleVolume,
     activeSession,
     setCurrentView,
     propFirmEvaluation,
@@ -463,6 +465,34 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
               <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-tv-textMuted border-b border-[#2a2e39]">
                 Встроенные индикаторы
               </div>
+
+              {/* Volume Toggle */}
+              <button
+                onClick={() => {
+                  toggleVolume();
+                }}
+                className={`w-full flex items-center justify-between p-2 rounded-lg text-xs transition-colors cursor-pointer ${
+                  showVolume
+                    ? 'bg-tv-blue/20 text-white font-medium'
+                    : 'hover:bg-[#131722] text-tv-text'
+                }`}
+              >
+                <div className="flex flex-col text-left">
+                  <span className="font-semibold">Объемы торгов (Volume)</span>
+                  <span className="text-[10px] text-tv-textMuted">Гистограмма внизу графика</span>
+                </div>
+                <div
+                  className={`w-8 h-4 rounded-full transition-colors relative ${
+                    showVolume ? 'bg-tv-blue' : 'bg-[#363a45]'
+                  }`}
+                >
+                  <div
+                    className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-transform ${
+                      showVolume ? 'right-0.5' : 'left-0.5'
+                    }`}
+                  />
+                </div>
+              </button>
 
               {/* Fractals Toggle */}
               <button

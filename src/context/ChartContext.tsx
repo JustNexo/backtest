@@ -92,6 +92,9 @@ interface ChartContextType {
   candleColors: CandleColorSettings;
   updateCandleColors: (colors: Partial<CandleColorSettings>) => void;
   resetCandleColors: () => void;
+  showVolume: boolean;
+  setShowVolume: (show: boolean) => void;
+  toggleVolume: () => void;
   themeSettings: ThemeSettings;
   updateThemeSettings: (theme: Partial<ThemeSettings>) => void;
   feeSettings: PropFirmFeeSettings;
@@ -877,6 +880,15 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     saveStoredCandleColors(DEFAULT_CANDLE_COLORS);
   }, []);
 
+  const showVolume = candleColors.showVolume !== false;
+  const setShowVolume = useCallback((show: boolean) => {
+    updateCandleColors({ showVolume: show });
+  }, [updateCandleColors]);
+
+  const toggleVolume = useCallback(() => {
+    updateCandleColors({ showVolume: !showVolume });
+  }, [showVolume, updateCandleColors]);
+
   const updateThemeSettings = useCallback((theme: Partial<ThemeSettings>) => {
     setThemeSettings((prev) => {
       const next = { ...prev, ...theme };
@@ -1130,6 +1142,9 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     candleColors,
     updateCandleColors,
     resetCandleColors,
+    showVolume,
+    setShowVolume,
+    toggleVolume,
     themeSettings,
     updateThemeSettings,
     feeSettings,

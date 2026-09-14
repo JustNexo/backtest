@@ -13,10 +13,10 @@ import {
   createSeriesMarkers,
 } from 'lightweight-charts';
 import { useChart } from '../../context/ChartContext';
-import { formatCurrency, formatDateTime, formatPercent, formatPrice, formatTickMark, TIMEZONE_OPTIONS } from '../../utils/formatters';
+import { formatCurrency, formatDateTime, formatPercent, formatPrice, formatTickMark, formatVolume, TIMEZONE_OPTIONS } from '../../utils/formatters';
 import { calculateRiskPosition } from '../../services/tradeEngine';
 import { SUPPORTED_SYMBOLS, SupportedSymbol } from '../../types/session';
-import { Scissors, GripVertical, X, Globe, ChevronDown, Check } from 'lucide-react';
+import { Scissors, GripVertical, X, Globe, ChevronDown, Check, Eye, EyeOff } from 'lucide-react';
 import { DrawingLayer } from './DrawingLayer';
 
 interface DragState {
@@ -66,7 +66,11 @@ export const TradingViewChart: React.FC = () => {
   const {
     symbol,
     visibleCandles,
+    currentCandle,
     candleColors,
+    showVolume,
+    toggleVolume,
+    updateCandleColors,
     themeSettings,
     replay,
     cutAtTime,
@@ -136,7 +140,7 @@ export const TradingViewChart: React.FC = () => {
         autoScale: true,
         scaleMargins: {
           top: 0.1,
-          bottom: 0.2,
+          bottom: showVolume ? 0.2 : 0.05,
         },
       },
       timeScale: {
@@ -182,6 +186,7 @@ export const TradingViewChart: React.FC = () => {
         type: 'volume',
       },
       priceScaleId: '',
+      visible: showVolume,
     });
 
     volumeSeries.priceScale().applyOptions({
@@ -404,9 +409,9 @@ export const TradingViewChart: React.FC = () => {
     });
   }, [candleColors]);
 
-  // Update candle data & volume data
+  // Update candle data, volume data, and volume visibility
   useEffect(() => {
-    if (!candleSeriesRef.current || !volumeSeriesRef.current || visibleCandles.length === 0) return;
+    if (!candleSeriesRef.current || visibleCandles.length === 0) return;
 
     const formattedCandles = visibleCandles.map((c) => ({
       time: c.time as Time,
@@ -415,17 +420,37 @@ export const TradingViewChart: React.FC = () => {
       low: c.low,
       close: c.close,
     }));
-
-    const formattedVolume = visibleCandles.map((c) => ({
-      time: c.time as Time,
-      value: c.volume,
-      color: c.close >= c.open ? candleColors.volumeUpColor : candleColors.volumeDownColor,
-    }));
-
     candleSeriesRef.current.setData(formattedCandles);
-    volumeSeriesRef.current.setData(formattedVolume);
+
+    if (volumeSeriesRef.current) {
+      const isVolVisible = showVolume !== false;
+      volumeSeriesRef.current.applyOptions({
+        visible: isVolVisible,
+      });
+
+      if (chartRef.current) {
+        chartRef.current.priceScale('right').applyOptions({
+          scaleMargins: {
+            top: 0.1,
+            bottom: isVolVisible ? 0.2 : 0.05,
+          },
+        });
+      }
+
+      if (isVolVisible) {
+        const formattedVolume = visibleCandles.map((c) => ({
+          time: c.time as Time,
+          value: c.volume,
+          color: c.close >= c.open ? candleColors.volumeUpColor : candleColors.volumeDownColor,
+        }));
+        volumeSeriesRef.current.setData(formattedVolume);
+      } else {
+        volumeSeriesRef.current.setData([]);
+      }
+    }
+
     forceUpdate();
-  }, [visibleCandles, candleColors.volumeUpColor, candleColors.volumeDownColor]);
+  }, [visibleCandles, showVolume, candleColors.volumeUpColor, candleColors.volumeDownColor]);
 
   // Update Williams Fractals Indicator Markers
   useEffect(() => {
@@ -806,6 +831,41 @@ export const TradingViewChart: React.FC = () => {
           replay.isSelectingCutPoint ? 'cursor-crosshair' : 'cursor-default'
         }`}
       />
+
+      {/* Top-Left Chart Legend / Indicator bar (TradingView style) */}
+      <div className="absolute top-2.5 left-3 z-20 pointer-events-auto flex items-center gap-2 select-none font-sans">
+        {showVolume ? (
+          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
+            <span className="text-tv-textMuted font-sans">Объем:</span>
+            <span className="text-white font-semibold">
+              {currentCandle ? formatVolume(currentCandle.volume) : '—'}
+            </span>
+            <button
+              onClick={() => toggleVolume()}
+              title="Скрыть гистограмму объемов"
+              className="p-0.5 text-tv-textMuted hover:text-white rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+            >
+              <Eye className="w-3 h-3" />
+            </button>
+            <button
+              onClick={() => updateCandleColors({ showVolume: false })}
+              title="Удалить индикатор объема"
+              className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => updateCandleColors({ showVolume: true })}
+            title="Показать гистограмму объемов торгов"
+            className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] hover:border-tv-blue text-tv-textMuted hover:text-white rounded-md text-[11px] transition-colors cursor-pointer shadow-sm"
+          >
+            <EyeOff className="w-3 h-3 text-tv-yellow" />
+            <span>+ Объем</span>
+          </button>
+        )}
+      </div>
 
       {/* INTERACTIVE DRAGGABLE BADGES OVERLAY */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">

@@ -221,21 +221,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
               {/* Volumes */}
               <div className="space-y-3 pt-2 border-t border-[#2a2e39]">
-                <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider">
-                  Столбцы объема (Volume)
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider">
+                    Столбцы объема (Volume)
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-white cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={candleColors.showVolume !== false}
+                      onChange={(e) => updateCandleColors({ showVolume: e.target.checked })}
+                      className="w-4 h-4 rounded text-tv-blue accent-tv-blue"
+                    />
+                    <span>Показывать объемы</span>
+                  </label>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <ColorPickerInput
-                    label="Объем Up"
-                    value={candleColors.volumeUpColor}
-                    onChange={(color) => updateCandleColors({ volumeUpColor: color })}
-                  />
-                  <ColorPickerInput
-                    label="Объем Down"
-                    value={candleColors.volumeDownColor}
-                    onChange={(color) => updateCandleColors({ volumeDownColor: color })}
-                  />
-                </div>
+                {candleColors.showVolume !== false && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <ColorPickerInput
+                      label="Объем Up"
+                      value={candleColors.volumeUpColor}
+                      onChange={(color) => updateCandleColors({ volumeUpColor: color })}
+                    />
+                    <ColorPickerInput
+                      label="Объем Down"
+                      value={candleColors.volumeDownColor}
+                      onChange={(color) => updateCandleColors({ volumeDownColor: color })}
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Reset to defaults */}

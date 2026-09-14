@@ -42,6 +42,7 @@ export interface CandleColorSettings {
   showWicks: boolean;
   wickUpColor: string;
   wickDownColor: string;
+  showVolume: boolean;
   volumeUpColor: string;
   volumeDownColor: string;
 }

@@ -11,6 +11,7 @@ export const DEFAULT_CANDLE_COLORS: CandleColorSettings = {
   showWicks: true,
   wickUpColor: '#089981',
   wickDownColor: '#f23645',
+  showVolume: true,
   volumeUpColor: 'rgba(8, 153, 129, 0.45)',
   volumeDownColor: 'rgba(242, 54, 69, 0.45)',
 };

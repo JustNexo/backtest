@@ -4,6 +4,7 @@ import {
   CandleColorSettings,
   DrawingObject,
   DrawingTool,
+  OrderSetupPreview,
   PropFirmFeeSettings,
   ReplayState,
   ThemeSettings,
@@ -38,10 +39,12 @@ import {
   loadStoredPropFirmSettings,
   loadStoredRiskSettings,
   loadStoredThemeSettings,
+  loadStoredTimezone,
   saveStoredCandleColors,
   saveStoredPropFirmSettings,
   saveStoredRiskSettings,
   saveStoredThemeSettings,
+  saveStoredTimezone,
 } from '../services/storage';
 
 interface ChartContextType {
@@ -108,6 +111,14 @@ interface ChartContextType {
   // Indicators
   showFractals: boolean;
   setShowFractals: (show: boolean) => void;
+
+  // Timezone
+  timezone: string;
+  setTimezone: (tz: string) => void;
+
+  // Pre-trade Order Setup (Draggable SL/TP before opening position)
+  orderSetup: OrderSetupPreview;
+  updateOrderSetup: (setup: Partial<OrderSetupPreview>) => void;
 }
 
 const ChartContext = createContext<ChartContextType | null>(null);
@@ -147,6 +158,27 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Indicators
   const [showFractals, setShowFractals] = useState<boolean>(false);
+
+  // Timezone
+  const [timezone, setTimezoneState] = useState<string>(loadStoredTimezone);
+  const setTimezone = useCallback((tz: string) => {
+    setTimezoneState(tz);
+    saveStoredTimezone(tz);
+  }, []);
+
+  // Pre-trade Order Setup (Draggable SL/TP on chart before opening position)
+  const [orderSetup, setOrderSetup] = useState<OrderSetupPreview>({
+    enabled: true,
+    side: 'long',
+    orderType: 'market',
+    entryPrice: 65000,
+    stopLoss: 64500,
+    takeProfit: 66500,
+  });
+
+  const updateOrderSetup = useCallback((setup: Partial<OrderSetupPreview>) => {
+    setOrderSetup((prev) => ({ ...prev, ...setup }));
+  }, []);
 
   // Timer ref for playback
   const playIntervalRef = useRef<number | null>(null);
@@ -213,6 +245,34 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (visibleCandles.length === 0) return null;
     return visibleCandles[visibleCandles.length - 1];
   }, [visibleCandles]);
+
+  // Keep orderSetup entryPrice and levels reasonable when candle or timeframe changes
+  useEffect(() => {
+    if (!currentCandle) return;
+    const curPrice = currentCandle.close;
+    setOrderSetup((prev) => {
+      // If major discrepancy (> 15% distance, e.g. switched timeframe to 2024 or initial load)
+      const diffRatio = Math.abs(curPrice - prev.entryPrice) / (curPrice || 1);
+      if (diffRatio > 0.15 || prev.entryPrice === 65000) {
+        const slDist = Math.round(curPrice * 0.008 * 10) / 10;
+        const tpDist = Math.round(slDist * 2 * 10) / 10;
+        return {
+          ...prev,
+          entryPrice: curPrice,
+          stopLoss: prev.side === 'long' ? Math.round((curPrice - slDist) * 10) / 10 : Math.round((curPrice + slDist) * 10) / 10,
+          takeProfit: prev.side === 'long' ? Math.round((curPrice + tpDist) * 10) / 10 : Math.round((curPrice - tpDist) * 10) / 10,
+        };
+      }
+      // If market order, entry price tracks current candle close
+      if (prev.orderType === 'market' && prev.entryPrice !== curPrice) {
+        return {
+          ...prev,
+          entryPrice: curPrice,
+        };
+      }
+      return prev;
+    });
+  }, [currentCandle?.close]);
 
   // Evaluate limit orders and active position when new candle appears (in replay or forward step)
   const processCandleTick = useCallback(
@@ -745,6 +805,10 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     clearDrawings,
     showFractals,
     setShowFractals,
+    timezone,
+    setTimezone,
+    orderSetup,
+    updateOrderSetup,
   };
 
   return <ChartContext.Provider value={value}>{children}</ChartContext.Provider>;

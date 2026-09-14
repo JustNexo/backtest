@@ -1,5 +1,27 @@
 export type Timeframe = '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '2h' | '4h' | '1d' | '1w';
 
+export type TimezoneId =
+  | 'UTC'
+  | 'Europe/Moscow'
+  | 'Europe/Kyiv'
+  | 'Europe/London'
+  | 'Europe/Berlin'
+  | 'America/New_York'
+  | 'America/Chicago'
+  | 'America/Los_Angeles'
+  | 'Asia/Dubai'
+  | 'Asia/Singapore'
+  | 'Asia/Tokyo';
+
+export interface OrderSetupPreview {
+  enabled: boolean;
+  side: 'long' | 'short';
+  orderType: 'market' | 'limit';
+  entryPrice: number;
+  stopLoss: number;
+  takeProfit: number;
+}
+
 export interface Candle {
   time: number; // Unix timestamp in seconds
   open: number;

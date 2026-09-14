@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   createChart,
   IChartApi,
@@ -13,12 +13,21 @@ import {
   createSeriesMarkers,
 } from 'lightweight-charts';
 import { useChart } from '../../context/ChartContext';
-import { formatCurrency, formatPercent, formatPrice } from '../../utils/formatters';
-import { Scissors, GripVertical, X, ArrowDownRight, ArrowUpRight } from 'lucide-react';
+import { formatCurrency, formatDateTime, formatPercent, formatPrice, formatTickMark, TIMEZONE_OPTIONS } from '../../utils/formatters';
+import { calculateRiskPosition } from '../../services/tradeEngine';
+import { Scissors, GripVertical, X, Globe, ChevronDown, Check } from 'lucide-react';
 import { DrawingLayer } from './DrawingLayer';
 
 interface DragState {
-  type: 'pos_sl' | 'pos_tp' | 'limit_price' | 'limit_sl' | 'limit_tp';
+  type:
+    | 'pos_sl'
+    | 'pos_tp'
+    | 'limit_price'
+    | 'limit_sl'
+    | 'limit_tp'
+    | 'preview_sl'
+    | 'preview_tp'
+    | 'preview_entry';
   orderId?: string;
 }
 
@@ -28,10 +37,15 @@ export const TradingViewChart: React.FC = () => {
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
 
-  // Position lines
+  // Active Position lines
   const entryLineRef = useRef<IPriceLine | null>(null);
   const slLineRef = useRef<IPriceLine | null>(null);
   const tpLineRef = useRef<IPriceLine | null>(null);
+
+  // Pre-trade Order Setup preview lines (draggable before opening trade)
+  const previewEntryLineRef = useRef<IPriceLine | null>(null);
+  const previewSlLineRef = useRef<IPriceLine | null>(null);
+  const previewTpLineRef = useRef<IPriceLine | null>(null);
 
   // Limit order lines map: orderId -> [limitLine, slLine, tpLine]
   const limitLinesMapRef = useRef<Map<string, IPriceLine[]>>(new Map());
@@ -44,6 +58,7 @@ export const TradingViewChart: React.FC = () => {
   const forceUpdate = useCallback(() => setTick((t) => t + 1), []);
 
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [isTzDropdownOpen, setIsTzDropdownOpen] = useState(false);
 
   const {
     visibleCandles,
@@ -55,7 +70,12 @@ export const TradingViewChart: React.FC = () => {
     activePosition,
     limitOrders,
     balance,
+    riskSettings,
     showFractals,
+    timezone,
+    setTimezone,
+    orderSetup,
+    updateOrderSetup,
     updateActivePositionSL,
     updateActivePositionTP,
     updateLimitOrderPrice,
@@ -74,6 +94,10 @@ export const TradingViewChart: React.FC = () => {
         textColor: themeSettings.textColor,
         fontSize: 12,
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, sans-serif",
+      },
+      localization: {
+        timeFormatter: (ts: number) => formatDateTime(ts, timezone),
+        dateFormat: 'yyyy-MM-dd',
       },
       grid: {
         vertLines: {
@@ -117,6 +141,7 @@ export const TradingViewChart: React.FC = () => {
         rightOffset: 14,
         barSpacing: 8,
         minBarSpacing: 3,
+        tickMarkFormatter: (time: any, tickMarkType: any) => formatTickMark(time, tickMarkType, timezone),
       },
       handleScroll: {
         mouseWheel: true,
@@ -165,7 +190,6 @@ export const TradingViewChart: React.FC = () => {
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
 
-    // Track pan & zoom to update draggable overlay coordinates
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
       forceUpdate();
     });
@@ -188,13 +212,16 @@ export const TradingViewChart: React.FC = () => {
     };
   }, []);
 
-  // Update theme
+  // Update theme & localization
   useEffect(() => {
     if (!chartRef.current) return;
     chartRef.current.applyOptions({
       layout: {
         background: { type: ColorType.Solid, color: themeSettings.backgroundColor },
         textColor: themeSettings.textColor,
+      },
+      localization: {
+        timeFormatter: (ts: number) => formatDateTime(ts, timezone),
       },
       grid: {
         vertLines: {
@@ -211,9 +238,10 @@ export const TradingViewChart: React.FC = () => {
       },
       timeScale: {
         borderColor: themeSettings.borderColor,
+        tickMarkFormatter: (time: any, tickMarkType: any) => formatTickMark(time, tickMarkType, timezone),
       },
     });
-  }, [themeSettings]);
+  }, [themeSettings, timezone]);
 
   // Update candle colors
   useEffect(() => {
@@ -268,7 +296,6 @@ export const TradingViewChart: React.FC = () => {
     const len = visibleCandles.length;
     for (let i = 2; i < len - 2; i++) {
       const c = visibleCandles[i];
-      // High Fractal (Peak)
       if (
         c.high > visibleCandles[i - 2].high &&
         c.high > visibleCandles[i - 1].high &&
@@ -284,7 +311,6 @@ export const TradingViewChart: React.FC = () => {
         });
       }
 
-      // Low Fractal (Trough)
       if (
         c.low < visibleCandles[i - 2].low &&
         c.low < visibleCandles[i - 1].low &&
@@ -379,22 +405,82 @@ export const TradingViewChart: React.FC = () => {
     };
   }, [activePosition, balance]);
 
+  // Update Pre-trade Order Setup Preview Lines (Draggable SL/TP before opening trade)
+  useEffect(() => {
+    const series = candleSeriesRef.current;
+    if (!series) return;
+
+    if (previewEntryLineRef.current) {
+      series.removePriceLine(previewEntryLineRef.current);
+      previewEntryLineRef.current = null;
+    }
+    if (previewSlLineRef.current) {
+      series.removePriceLine(previewSlLineRef.current);
+      previewSlLineRef.current = null;
+    }
+    if (previewTpLineRef.current) {
+      series.removePriceLine(previewTpLineRef.current);
+      previewTpLineRef.current = null;
+    }
+
+    // Only show preview if NO active position is currently open
+    if (!activePosition && orderSetup.enabled) {
+      const { side, orderType: oType, entryPrice, stopLoss, takeProfit } = orderSetup;
+      const riskCalc = calculateRiskPosition(balance, riskSettings, entryPrice, stopLoss, takeProfit);
+
+      // 1. Preview Entry Line
+      previewEntryLineRef.current = series.createPriceLine({
+        price: entryPrice,
+        color: oType === 'limit' ? '#f7a600' : '#2962ff',
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `ПРЕДПРОСМОТР ВХОДА (${side.toUpperCase()} ${riskCalc.sizeBtc} BTC)`,
+      });
+
+      // 2. Preview Stop Loss Line
+      previewSlLineRef.current = series.createPriceLine({
+        price: stopLoss,
+        color: '#f23645',
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `ПРЕДПРОСМОТР SL (-$${riskCalc.riskUsd} / -${riskSettings.riskPercent}%)`,
+      });
+
+      // 3. Preview Take Profit Line
+      previewTpLineRef.current = series.createPriceLine({
+        price: takeProfit,
+        color: '#089981',
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `ПРЕДПРОСМОТР TP (+$${riskCalc.potentialProfitUsd} / ${riskCalc.riskRewardRatio}R)`,
+      });
+    }
+
+    forceUpdate();
+
+    return () => {
+      if (previewEntryLineRef.current) series.removePriceLine(previewEntryLineRef.current);
+      if (previewSlLineRef.current) series.removePriceLine(previewSlLineRef.current);
+      if (previewTpLineRef.current) series.removePriceLine(previewTpLineRef.current);
+    };
+  }, [activePosition, orderSetup, balance, riskSettings]);
+
   // Update Limit Order Price Lines
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series) return;
 
-    // Remove obsolete lines
     limitLinesMapRef.current.forEach((lines) => {
       lines.forEach((l) => series.removePriceLine(l));
     });
     limitLinesMapRef.current.clear();
 
-    // Create lines for current limit orders
     limitOrders.forEach((order) => {
       const lines: IPriceLine[] = [];
 
-      // Limit entry line
       const limitLine = series.createPriceLine({
         price: order.limitPrice,
         color: '#f7a600',
@@ -442,7 +528,7 @@ export const TradingViewChart: React.FC = () => {
     };
   }, [limitOrders]);
 
-  // Drag-and-drop mouse handlers
+  // Drag-and-drop mouse handlers for active positions, limit orders, and pre-trade preview
   useEffect(() => {
     if (!dragState) return;
 
@@ -456,16 +542,27 @@ export const TradingViewChart: React.FC = () => {
 
       const roundedPrice = Number(newPrice.toFixed(1));
 
+      // Active position dragging
       if (dragState.type === 'pos_sl') {
         updateActivePositionSL(roundedPrice);
       } else if (dragState.type === 'pos_tp') {
         updateActivePositionTP(roundedPrice);
-      } else if (dragState.type === 'limit_price' && dragState.orderId) {
+      }
+      // Limit order dragging
+      else if (dragState.type === 'limit_price' && dragState.orderId) {
         updateLimitOrderPrice(dragState.orderId, roundedPrice);
       } else if (dragState.type === 'limit_sl' && dragState.orderId) {
         updateLimitOrderSL(dragState.orderId, roundedPrice);
       } else if (dragState.type === 'limit_tp' && dragState.orderId) {
         updateLimitOrderTP(dragState.orderId, roundedPrice);
+      }
+      // PRE-TRADE SETUP DRAGGING (BEFORE OPENING POSITION!)
+      else if (dragState.type === 'preview_sl') {
+        updateOrderSetup({ stopLoss: roundedPrice });
+      } else if (dragState.type === 'preview_tp') {
+        updateOrderSetup({ takeProfit: roundedPrice });
+      } else if (dragState.type === 'preview_entry') {
+        updateOrderSetup({ entryPrice: roundedPrice });
       }
     };
 
@@ -487,6 +584,7 @@ export const TradingViewChart: React.FC = () => {
     updateLimitOrderPrice,
     updateLimitOrderSL,
     updateLimitOrderTP,
+    updateOrderSetup,
   ]);
 
   // Click handler on chart for Cut / Scissors Mode
@@ -505,10 +603,29 @@ export const TradingViewChart: React.FC = () => {
     };
   }, [replay.isSelectingCutPoint, cutAtTime]);
 
-  // Calculate coordinates for draggable badges
+  // Coordinates calculation for draggable badges
   const series = candleSeriesRef.current;
   const posSlY = series && activePosition?.stopLoss ? series.priceToCoordinate(activePosition.stopLoss) : null;
   const posTpY = series && activePosition?.takeProfit ? series.priceToCoordinate(activePosition.takeProfit) : null;
+
+  // Pre-trade setup preview coordinates
+  const showPreview = !activePosition && orderSetup.enabled;
+  const prevEntryY = series && showPreview ? series.priceToCoordinate(orderSetup.entryPrice) : null;
+  const prevSlY = series && showPreview ? series.priceToCoordinate(orderSetup.stopLoss) : null;
+  const prevTpY = series && showPreview ? series.priceToCoordinate(orderSetup.takeProfit) : null;
+
+  // Pre-trade calculations for badge labels
+  const prevCalc = useMemo(() => {
+    return calculateRiskPosition(
+      balance,
+      riskSettings,
+      orderSetup.entryPrice,
+      orderSetup.stopLoss,
+      orderSetup.takeProfit
+    );
+  }, [balance, riskSettings, orderSetup]);
+
+  const currentTzObj = TIMEZONE_OPTIONS.find((t) => t.id === timezone) || TIMEZONE_OPTIONS[0];
 
   return (
     <div className="relative w-full h-full flex flex-col bg-tv-bg overflow-hidden select-none">
@@ -536,7 +653,87 @@ export const TradingViewChart: React.FC = () => {
 
       {/* INTERACTIVE DRAGGABLE BADGES OVERLAY */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        {/* Active Position: Draggable Stop Loss Handle */}
+        {/* ========================================================================= */}
+        {/* 1. PRE-TRADE ORDER SETUP (DRAGGABLE BEFORE OPENING POSITION!)             */}
+        {/* ========================================================================= */}
+        {showPreview && (
+          <>
+            {/* Draggable Preview Stop Loss Handle */}
+            {prevSlY !== null && (
+              <div
+                style={{ top: `${prevSlY}px` }}
+                className="absolute left-16 -translate-y-1/2 pointer-events-auto z-20 flex items-center group cursor-ns-resize select-none"
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  setDragState({ type: 'preview_sl' });
+                }}
+                title="Зажмите и тяните для настройки Stop Loss ДО входа в позицию"
+              >
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#f23645]/95 hover:bg-[#f23645] text-white text-[11px] font-mono font-bold rounded-lg shadow-xl border border-white/30 transition-all group-hover:scale-105">
+                  <GripVertical className="w-3.5 h-3.5 opacity-80" />
+                  <span>SL: ${formatPrice(orderSetup.stopLoss)}</span>
+                  <span className="text-[10px] opacity-80 pl-1 border-l border-white/30">
+                    -${prevCalc.riskUsd} (-{riskSettings.riskPercent}%)
+                  </span>
+                  <span className="text-[9px] bg-black/30 px-1 py-0.2 rounded font-sans uppercase">
+                    Тянуть
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Draggable Preview Take Profit Handle */}
+            {prevTpY !== null && (
+              <div
+                style={{ top: `${prevTpY}px` }}
+                className="absolute left-16 -translate-y-1/2 pointer-events-auto z-20 flex items-center group cursor-ns-resize select-none"
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  setDragState({ type: 'preview_tp' });
+                }}
+                title="Зажмите и тяните для настройки Take Profit ДО входа в позицию"
+              >
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#089981]/95 hover:bg-[#089981] text-white text-[11px] font-mono font-bold rounded-lg shadow-xl border border-white/30 transition-all group-hover:scale-105">
+                  <GripVertical className="w-3.5 h-3.5 opacity-80" />
+                  <span>TP: ${formatPrice(orderSetup.takeProfit)}</span>
+                  <span className="text-[10px] opacity-80 pl-1 border-l border-white/30">
+                    +${prevCalc.potentialProfitUsd} ({prevCalc.riskRewardRatio}R)
+                  </span>
+                  <span className="text-[9px] bg-black/30 px-1 py-0.2 rounded font-sans uppercase">
+                    Тянуть
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Draggable Preview Limit Entry Handle (if Limit order selected) */}
+            {prevEntryY !== null && orderSetup.orderType === 'limit' && (
+              <div
+                style={{ top: `${prevEntryY}px` }}
+                className="absolute left-16 -translate-y-1/2 pointer-events-auto z-20 flex items-center group cursor-ns-resize select-none"
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  setDragState({ type: 'preview_entry' });
+                }}
+                title="Зажмите и тяните для изменения цены лимитного ордера"
+              >
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#f7a600]/95 hover:bg-[#f7a600] text-black text-[11px] font-mono font-bold rounded-lg shadow-xl border border-black/30 transition-all group-hover:scale-105">
+                  <GripVertical className="w-3.5 h-3.5 opacity-80" />
+                  <span>
+                    ВХОД LIMIT: ${formatPrice(orderSetup.entryPrice)} ({prevCalc.sizeBtc} BTC)
+                  </span>
+                  <span className="text-[9px] bg-black/20 px-1 py-0.2 rounded font-sans uppercase">
+                    Тянуть
+                  </span>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ========================================================================= */}
+        {/* 2. ACTIVE POSITION HANDLES                                                */}
+        {/* ========================================================================= */}
         {posSlY !== null && activePosition?.stopLoss && (
           <div
             style={{ top: `${posSlY}px` }}
@@ -551,13 +748,12 @@ export const TradingViewChart: React.FC = () => {
               <GripVertical className="w-3.5 h-3.5 opacity-80" />
               <span>SL: ${formatPrice(activePosition.stopLoss)}</span>
               <span className="text-[10px] opacity-80 pl-1 border-l border-white/30">
-                -${Math.abs(activePosition.entryPrice - activePosition.stopLoss) * activePosition.size < 0.1 ? '0.0' : (Math.abs(activePosition.entryPrice - activePosition.stopLoss) * activePosition.size).toFixed(1)}
+                -${(Math.abs(activePosition.entryPrice - activePosition.stopLoss) * activePosition.size).toFixed(1)}
               </span>
             </div>
           </div>
         )}
 
-        {/* Active Position: Draggable Take Profit Handle */}
         {posTpY !== null && activePosition?.takeProfit && (
           <div
             style={{ top: `${posTpY}px` }}
@@ -578,7 +774,9 @@ export const TradingViewChart: React.FC = () => {
           </div>
         )}
 
-        {/* Limit Orders Draggable Handles */}
+        {/* ========================================================================= */}
+        {/* 3. PENDING LIMIT ORDERS HANDLES                                           */}
+        {/* ========================================================================= */}
         {series &&
           limitOrders.map((order) => {
             const limitY = series.priceToCoordinate(order.limitPrice);
@@ -587,7 +785,6 @@ export const TradingViewChart: React.FC = () => {
 
             return (
               <React.Fragment key={order.id}>
-                {/* Limit Entry Handle */}
                 {limitY !== null && (
                   <div
                     style={{ top: `${limitY}px` }}
@@ -617,7 +814,6 @@ export const TradingViewChart: React.FC = () => {
                   </div>
                 )}
 
-                {/* Limit SL Handle */}
                 {slY !== null && order.stopLoss && (
                   <div
                     style={{ top: `${slY}px` }}
@@ -635,7 +831,6 @@ export const TradingViewChart: React.FC = () => {
                   </div>
                 )}
 
-                {/* Limit TP Handle */}
                 {tpY !== null && order.takeProfit && (
                   <div
                     style={{ top: `${tpY}px` }}
@@ -655,6 +850,48 @@ export const TradingViewChart: React.FC = () => {
               </React.Fragment>
             );
           })}
+      </div>
+
+      {/* ========================================================================= */}
+      {/* 4. TRADINGVIEW TIMEZONE SELECTOR BADGE (Bottom-Right)                     */}
+      {/* ========================================================================= */}
+      <div className="absolute bottom-7 right-3 z-30 flex items-center select-none">
+        <div className="relative">
+          <button
+            onClick={() => setIsTzDropdownOpen(!isTzDropdownOpen)}
+            title="Выбрать часовой пояс времени графика"
+            className="flex items-center gap-1 px-2 py-1 bg-[#1e222d]/90 hover:bg-[#2a2e39] backdrop-blur-md border border-[#2a2e39] text-tv-text hover:text-white rounded-lg text-[11px] font-mono transition-colors shadow-lg"
+          >
+            <Globe className="w-3 h-3 text-tv-blue" />
+            <span>{currentTzObj.offset}</span>
+            <ChevronDown className="w-3 h-3 text-tv-textMuted" />
+          </button>
+
+          {isTzDropdownOpen && (
+            <div className="absolute bottom-full mb-2 right-0 w-64 bg-[#1e222d] border border-[#2a2e39] rounded-xl shadow-2xl py-1 z-40 max-h-72 overflow-y-auto">
+              <div className="px-3 py-1 text-[10px] font-semibold text-tv-textMuted uppercase tracking-wider border-b border-[#2a2e39]">
+                Часовой пояс (Timezone)
+              </div>
+              {TIMEZONE_OPTIONS.map((tz) => (
+                <button
+                  key={tz.id}
+                  onClick={() => {
+                    setTimezone(tz.id);
+                    setIsTzDropdownOpen(false);
+                  }}
+                  className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors ${
+                    timezone === tz.id
+                      ? 'bg-tv-blue/20 text-tv-blue font-semibold'
+                      : 'hover:bg-tv-surfaceHover text-tv-text hover:text-white'
+                  }`}
+                >
+                  <span className="truncate">{tz.label}</span>
+                  {timezone === tz.id && <Check className="w-3.5 h-3.5 shrink-0" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Interactive Drawing Layer (Rectangles, Lines, Levels) */}

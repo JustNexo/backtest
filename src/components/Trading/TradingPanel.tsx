@@ -18,6 +18,8 @@ import {
   X,
   Crosshair,
   Sparkles,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useChart } from '../../context/ChartContext';
 import { calculateRiskPosition } from '../../services/tradeEngine';
@@ -43,45 +45,17 @@ export const TradingPanel: React.FC = () => {
     closeActivePosition,
     resetBacktest,
     feeSettings,
+    timezone,
+    orderSetup,
+    updateOrderSetup,
   } = useChart();
 
-  // Order Type: Market vs Limit
-  const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
-  const [tradeSide, setTradeSide] = useState<'long' | 'short'>('long');
+  const currentPrice = currentCandle?.close || orderSetup.entryPrice || 65000;
 
-  const currentPrice = currentCandle?.close || 65000;
-  const [customLimitPrice, setCustomLimitPrice] = useState<string>('');
-  const [customSlPrice, setCustomSlPrice] = useState<string>('');
-  const [customTpPrice, setCustomTpPrice] = useState<string>('');
-
-  // Effective Entry Price (limit price if limit order, else current market price)
-  const defaultLimitPrice = useMemo(() => {
-    return tradeSide === 'long'
-      ? (currentPrice * 0.995).toFixed(1)
-      : (currentPrice * 1.005).toFixed(1);
-  }, [currentPrice, tradeSide]);
-
-  const effectiveEntryPrice = orderType === 'limit'
-    ? (parseFloat(customLimitPrice) || parseFloat(defaultLimitPrice))
+  // Effective Entry Price: if limit, orderSetup.entryPrice; else current market price
+  const effectiveEntryPrice = orderSetup.orderType === 'limit'
+    ? orderSetup.entryPrice
     : currentPrice;
-
-  // Calculated suggested SL & TP when prices change
-  const defaultSl = useMemo(() => {
-    return tradeSide === 'long'
-      ? (effectiveEntryPrice * 0.992).toFixed(1)
-      : (effectiveEntryPrice * 1.008).toFixed(1);
-  }, [effectiveEntryPrice, tradeSide]);
-
-  const slPriceNumber = parseFloat(customSlPrice) || parseFloat(defaultSl);
-  const slDist = Math.abs(effectiveEntryPrice - slPriceNumber);
-
-  const defaultTp = useMemo(() => {
-    return tradeSide === 'long'
-      ? (effectiveEntryPrice + slDist * riskSettings.defaultTpRatio).toFixed(1)
-      : (effectiveEntryPrice - slDist * riskSettings.defaultTpRatio).toFixed(1);
-  }, [effectiveEntryPrice, slDist, tradeSide, riskSettings.defaultTpRatio]);
-
-  const tpPriceNumber = parseFloat(customTpPrice) || parseFloat(defaultTp);
 
   // Real-time Risk & Position calculation
   const riskCalc = useMemo(() => {
@@ -89,20 +63,43 @@ export const TradingPanel: React.FC = () => {
       balance,
       riskSettings,
       effectiveEntryPrice,
-      slPriceNumber,
-      tpPriceNumber
+      orderSetup.stopLoss,
+      orderSetup.takeProfit
     );
-  }, [balance, riskSettings, effectiveEntryPrice, slPriceNumber, tpPriceNumber]);
+  }, [balance, riskSettings, effectiveEntryPrice, orderSetup.stopLoss, orderSetup.takeProfit]);
 
-  const handleOpenMarketTrade = (side: 'long' | 'short') => {
-    executeTrade(side, slPriceNumber, tpPriceNumber);
-    setActiveTab('position');
+  const handleSetSide = (side: 'long' | 'short') => {
+    if (side === orderSetup.side) return;
+    const entry = effectiveEntryPrice;
+    const slDist = Math.abs(entry - orderSetup.stopLoss) || Math.round(entry * 0.008 * 10) / 10;
+    const tpDist = Math.abs(orderSetup.takeProfit - entry) || Math.round(slDist * 2 * 10) / 10;
+    updateOrderSetup({
+      side,
+      stopLoss: side === 'long' ? Math.round((entry - slDist) * 10) / 10 : Math.round((entry + slDist) * 10) / 10,
+      takeProfit: side === 'long' ? Math.round((entry + tpDist) * 10) / 10 : Math.round((entry - tpDist) * 10) / 10,
+    });
   };
 
-  const handlePlaceLimitOrder = (side: 'long' | 'short') => {
-    const success = addLimitOrder(side, effectiveEntryPrice, slPriceNumber, tpPriceNumber);
-    if (success) {
-      setActiveTab('orders');
+  const handleSetOrderType = (type: 'market' | 'limit') => {
+    if (type === orderSetup.orderType) return;
+    const entry = type === 'limit'
+      ? (orderSetup.side === 'long' ? Math.round(currentPrice * 0.995 * 10) / 10 : Math.round(currentPrice * 1.005 * 10) / 10)
+      : currentPrice;
+    updateOrderSetup({
+      orderType: type,
+      entryPrice: entry,
+    });
+  };
+
+  const handleExecuteTrade = (side: 'long' | 'short') => {
+    if (orderSetup.orderType === 'market') {
+      executeTrade(side, orderSetup.stopLoss, orderSetup.takeProfit);
+      setActiveTab('position');
+    } else {
+      const success = addLimitOrder(side, orderSetup.entryPrice, orderSetup.stopLoss, orderSetup.takeProfit);
+      if (success) {
+        setActiveTab('orders');
+      }
     }
   };
 
@@ -267,9 +264,9 @@ export const TradingPanel: React.FC = () => {
                   {/* Order Type Toggle: Market vs Limit */}
                   <div className="flex bg-[#1e222d] p-0.5 rounded-lg border border-[#2a2e39]">
                     <button
-                      onClick={() => setOrderType('market')}
+                      onClick={() => handleSetOrderType('market')}
                       className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                        orderType === 'market'
+                        orderSetup.orderType === 'market'
                           ? 'bg-tv-blue text-white shadow-sm'
                           : 'text-tv-textMuted hover:text-white'
                       }`}
@@ -277,9 +274,9 @@ export const TradingPanel: React.FC = () => {
                       По рынку (Market)
                     </button>
                     <button
-                      onClick={() => setOrderType('limit')}
+                      onClick={() => handleSetOrderType('limit')}
                       className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                        orderType === 'limit'
+                        orderSetup.orderType === 'limit'
                           ? 'bg-[#f7a600] text-black shadow-sm'
                           : 'text-tv-textMuted hover:text-white'
                       }`}
@@ -313,8 +310,37 @@ export const TradingPanel: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Side Selector: LONG vs SHORT */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-tv-textMuted font-medium">Направление:</span>
+                  <div className="flex flex-1 bg-[#1e222d] p-0.5 rounded-lg border border-[#2a2e39]">
+                    <button
+                      onClick={() => handleSetSide('long')}
+                      className={`flex-1 py-1 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1 ${
+                        orderSetup.side === 'long'
+                          ? 'bg-[#089981] text-white shadow-sm'
+                          : 'text-tv-textMuted hover:text-white'
+                      }`}
+                    >
+                      <TrendingUp className="w-3.5 h-3.5" />
+                      <span>LONG</span>
+                    </button>
+                    <button
+                      onClick={() => handleSetSide('short')}
+                      className={`flex-1 py-1 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1 ${
+                        orderSetup.side === 'short'
+                          ? 'bg-[#f23645] text-white shadow-sm'
+                          : 'text-tv-textMuted hover:text-white'
+                      }`}
+                    >
+                      <TrendingDown className="w-3.5 h-3.5" />
+                      <span>SHORT</span>
+                    </button>
+                  </div>
+                </div>
+
                 {/* If Limit Order, show Limit Price Input */}
-                {orderType === 'limit' && (
+                {orderSetup.orderType === 'limit' && (
                   <div>
                     <div className="flex items-center justify-between text-xs mb-1">
                       <label className="text-tv-text font-medium flex items-center gap-1 text-[#f7a600]">
@@ -322,7 +348,7 @@ export const TradingPanel: React.FC = () => {
                         Лимитная цена входа ($)
                       </label>
                       <button
-                        onClick={() => setCustomLimitPrice(currentPrice.toFixed(1))}
+                        onClick={() => updateOrderSetup({ entryPrice: Math.round(currentPrice * 10) / 10 })}
                         className="text-[10px] text-tv-textMuted hover:text-white underline"
                       >
                         Текущая (${formatPrice(currentPrice, 1)})
@@ -331,9 +357,10 @@ export const TradingPanel: React.FC = () => {
                     <input
                       type="number"
                       step="0.5"
-                      placeholder={defaultLimitPrice}
-                      value={customLimitPrice}
-                      onChange={(e) => setCustomLimitPrice(e.target.value)}
+                      value={orderSetup.entryPrice || ''}
+                      onChange={(e) =>
+                        updateOrderSetup({ entryPrice: parseFloat(e.target.value) || 0 })
+                      }
                       className="w-full px-3 py-1.5 bg-[#1e222d] border border-[#f7a600]/50 rounded-lg text-xs text-white font-mono focus:border-[#f7a600] focus:outline-none"
                     />
                   </div>
@@ -393,38 +420,95 @@ export const TradingPanel: React.FC = () => {
                   )}
                 </div>
 
-                {/* SL and TP Distance Inputs */}
-                <div className="grid grid-cols-2 gap-2 pt-1">
+                {/* SL and TP Inputs with Presets */}
+                <div className="space-y-2 pt-1">
+                  {/* Stop Loss Row */}
                   <div>
-                    <label className="text-[11px] text-tv-textMuted block mb-1">
-                      Stop Loss ($)
-                    </label>
+                    <div className="flex items-center justify-between text-[11px] mb-1">
+                      <label className="text-tv-text font-medium flex items-center gap-1 text-tv-red">
+                        <span>Stop Loss ($)</span>
+                      </label>
+                      <div className="flex items-center gap-1">
+                        {[0.5, 1.0, 1.5, 2.0].map((pct) => (
+                          <button
+                            key={pct}
+                            onClick={() => {
+                              const dist = Math.round(effectiveEntryPrice * (pct / 100) * 10) / 10;
+                              const newSl = orderSetup.side === 'long' ? effectiveEntryPrice - dist : effectiveEntryPrice + dist;
+                              updateOrderSetup({ stopLoss: Math.round(newSl * 10) / 10 });
+                            }}
+                            className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-[#1e222d] hover:bg-tv-red/30 border border-[#2a2e39] text-tv-textMuted hover:text-white transition-colors"
+                          >
+                            {pct}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <input
                       type="number"
-                      step="1"
-                      placeholder={defaultSl}
-                      value={customSlPrice}
-                      onChange={(e) => setCustomSlPrice(e.target.value)}
-                      className="w-full px-2.5 py-1.5 bg-[#1e222d] border border-[#2a2e39] rounded-lg text-xs text-white font-mono focus:border-tv-red focus:outline-none"
+                      step="0.5"
+                      value={orderSetup.stopLoss || ''}
+                      onChange={(e) =>
+                        updateOrderSetup({ stopLoss: parseFloat(e.target.value) || 0 })
+                      }
+                      className="w-full px-2.5 py-1.5 bg-[#1e222d] border border-tv-red/50 rounded-lg text-xs text-white font-mono focus:border-tv-red focus:outline-none"
                     />
                   </div>
+
+                  {/* Take Profit Row */}
                   <div>
-                    <label className="text-[11px] text-tv-textMuted block mb-1">
-                      Take Profit ($)
-                    </label>
+                    <div className="flex items-center justify-between text-[11px] mb-1">
+                      <label className="text-tv-text font-medium flex items-center gap-1 text-tv-green">
+                        <span>Take Profit ($)</span>
+                      </label>
+                      <div className="flex items-center gap-1">
+                        {[1.5, 2.0, 3.0, 4.0].map((rr) => (
+                          <button
+                            key={rr}
+                            onClick={() => {
+                              const slDist = Math.abs(effectiveEntryPrice - orderSetup.stopLoss);
+                              if (slDist > 0) {
+                                const tpDist = Math.round(slDist * rr * 10) / 10;
+                                const newTp = orderSetup.side === 'long' ? effectiveEntryPrice + tpDist : effectiveEntryPrice - tpDist;
+                                updateOrderSetup({ takeProfit: Math.round(newTp * 10) / 10 });
+                              }
+                            }}
+                            className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-[#1e222d] hover:bg-tv-green/30 border border-[#2a2e39] text-tv-textMuted hover:text-white transition-colors"
+                          >
+                            1:{rr}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <input
                       type="number"
-                      step="1"
-                      placeholder={defaultTp}
-                      value={customTpPrice}
-                      onChange={(e) => setCustomTpPrice(e.target.value)}
-                      className="w-full px-2.5 py-1.5 bg-[#1e222d] border border-[#2a2e39] rounded-lg text-xs text-white font-mono focus:border-tv-green focus:outline-none"
+                      step="0.5"
+                      value={orderSetup.takeProfit || ''}
+                      onChange={(e) =>
+                        updateOrderSetup({ takeProfit: parseFloat(e.target.value) || 0 })
+                      }
+                      className="w-full px-2.5 py-1.5 bg-[#1e222d] border border-tv-green/50 rounded-lg text-xs text-white font-mono focus:border-tv-green focus:outline-none"
                     />
                   </div>
                 </div>
 
-                <div className="text-[10px] text-tv-textMuted italic">
-                  💡 На графике можно перетаскивать уровни SL и TP мышкой за ярлыки!
+                <div className="flex items-center justify-between pt-1 text-[11px] text-tv-textMuted border-t border-[#2a2e39]/50">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-tv-yellow font-bold">✨ Drag & Drop:</span>
+                    <span>Тяните SL/TP на графике!</span>
+                  </div>
+                  <button
+                    onClick={() => updateOrderSetup({ enabled: !orderSetup.enabled })}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                      orderSetup.enabled
+                        ? 'border-tv-blue bg-tv-blue/20 text-tv-blue'
+                        : 'border-[#2a2e39] text-tv-textMuted hover:text-white'
+                    }`}
+                    title="Показать или скрыть интерактивные уровни ордера на графике"
+                  >
+                    {orderSetup.enabled ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                    <span>{orderSetup.enabled ? 'На графике' : 'Скрыты'}</span>
+                  </button>
                 </div>
               </div>
 
@@ -432,7 +516,7 @@ export const TradingPanel: React.FC = () => {
               <div className="md:col-span-5 bg-[#131722] p-3.5 rounded-xl border border-[#2a2e39] flex flex-col justify-between">
                 <div>
                   <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider mb-2">
-                    Автоматический расчет позиции
+                    Автоматический расчет позиции (MetaTrader)
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs font-mono">
                     <div className="p-2 bg-[#1e222d] rounded-lg">
@@ -474,28 +558,26 @@ export const TradingPanel: React.FC = () => {
               {/* Column 3: Order Execution Buttons */}
               <div className="md:col-span-3 flex flex-col justify-between gap-2 bg-[#131722] p-3.5 rounded-xl border border-[#2a2e39]">
                 <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider">
-                  {orderType === 'market' ? 'Рыночное исполнение' : 'Выставление лимитки'}
+                  {orderSetup.orderType === 'market' ? 'Рыночное исполнение' : 'Выставление лимитки'}
                 </div>
 
                 <div className="space-y-2">
                   <button
                     onClick={() => {
-                      setTradeSide('long');
-                      if (orderType === 'market') {
-                        handleOpenMarketTrade('long');
-                      } else {
-                        handlePlaceLimitOrder('long');
-                      }
+                      handleSetSide('long');
+                      handleExecuteTrade('long');
                     }}
                     className={`w-full py-2.5 px-4 text-white font-semibold text-xs rounded-xl shadow-lg transition-all flex items-center justify-between ${
-                      orderType === 'market'
-                        ? 'bg-tv-green hover:bg-tv-greenHover shadow-tv-green/20'
-                        : 'bg-[#089981] hover:bg-[#067a67] border border-white/20'
+                      orderSetup.side === 'long'
+                        ? orderSetup.orderType === 'market'
+                          ? 'bg-tv-green hover:bg-tv-greenHover shadow-tv-green/20 ring-2 ring-white/30'
+                          : 'bg-[#089981] hover:bg-[#067a67] border border-white/20 ring-2 ring-white/30'
+                        : 'bg-[#1e222d] hover:bg-[#2a2e39] text-tv-text border border-[#2a2e39]'
                     }`}
                   >
                     <span className="flex items-center gap-1.5">
-                      <TrendingUp className="w-4 h-4" />
-                      {orderType === 'market' ? 'КУПИТЬ / LONG' : 'LIMIT LONG'}
+                      <TrendingUp className="w-4 h-4 text-[#089981]" />
+                      {orderSetup.orderType === 'market' ? 'КУПИТЬ / LONG' : 'LIMIT LONG'}
                     </span>
                     <span className="font-mono text-[11px] opacity-90">
                       ${formatPrice(effectiveEntryPrice, 1)}
@@ -504,22 +586,20 @@ export const TradingPanel: React.FC = () => {
 
                   <button
                     onClick={() => {
-                      setTradeSide('short');
-                      if (orderType === 'market') {
-                        handleOpenMarketTrade('short');
-                      } else {
-                        handlePlaceLimitOrder('short');
-                      }
+                      handleSetSide('short');
+                      handleExecuteTrade('short');
                     }}
                     className={`w-full py-2.5 px-4 text-white font-semibold text-xs rounded-xl shadow-lg transition-all flex items-center justify-between ${
-                      orderType === 'market'
-                        ? 'bg-tv-red hover:bg-tv-redHover shadow-tv-red/20'
-                        : 'bg-[#d32635] hover:bg-[#b01e2b] border border-white/20'
+                      orderSetup.side === 'short'
+                        ? orderSetup.orderType === 'market'
+                          ? 'bg-tv-red hover:bg-tv-redHover shadow-tv-red/20 ring-2 ring-white/30'
+                          : 'bg-[#d32635] hover:bg-[#b01e2b] border border-white/20 ring-2 ring-white/30'
+                        : 'bg-[#1e222d] hover:bg-[#2a2e39] text-tv-text border border-[#2a2e39]'
                     }`}
                   >
                     <span className="flex items-center gap-1.5">
-                      <TrendingDown className="w-4 h-4" />
-                      {orderType === 'market' ? 'ПРОДАТЬ / SHORT' : 'LIMIT SHORT'}
+                      <TrendingDown className="w-4 h-4 text-[#f23645]" />
+                      {orderSetup.orderType === 'market' ? 'ПРОДАТЬ / SHORT' : 'LIMIT SHORT'}
                     </span>
                     <span className="font-mono text-[11px] opacity-90">
                       ${formatPrice(effectiveEntryPrice, 1)}
@@ -554,7 +634,7 @@ export const TradingPanel: React.FC = () => {
                         {activePosition.size} BTC @ ${formatPrice(activePosition.entryPrice)}
                       </div>
                       <div className="text-[11px] text-tv-textMuted font-mono">
-                        Открыта: {formatDateTime(activePosition.entryTime)}
+                        Открыта: {formatDateTime(activePosition.entryTime, timezone)}
                       </div>
                     </div>
                   </div>
@@ -663,7 +743,7 @@ export const TradingPanel: React.FC = () => {
                             ${o.riskUsd}
                           </td>
                           <td className="py-2 px-3 text-tv-textMuted">
-                            {formatDateTime(o.createdTime)}
+                            {formatDateTime(o.createdTime, timezone)}
                           </td>
                           <td className="py-2 px-3 text-right">
                             <button
@@ -736,7 +816,7 @@ export const TradingPanel: React.FC = () => {
                             </span>
                           </td>
                           <td className="py-2 px-3 text-tv-textMuted">
-                            {formatDateTime(t.entryTime)}
+                            {formatDateTime(t.entryTime, timezone)}
                           </td>
                           <td className="py-2 px-3 text-white">${formatPrice(t.entryPrice)}</td>
                           <td className="py-2 px-3 text-white">${formatPrice(t.exitPrice)}</td>

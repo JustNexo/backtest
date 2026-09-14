@@ -69,7 +69,22 @@ const STORAGE_KEYS = {
   PROP_FIRM_SETTINGS: 'tv_backtest_prop_firm_settings',
   RISK_SETTINGS: 'tv_backtest_risk_settings',
   BALANCE: 'tv_backtest_balance',
+  TIMEZONE: 'tv_backtest_timezone',
 };
+
+export function loadStoredTimezone(): string {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.TIMEZONE) || 'UTC';
+  } catch (e) {
+    return 'UTC';
+  }
+}
+
+export function saveStoredTimezone(tz: string): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.TIMEZONE, tz);
+  } catch (e) {}
+}
 
 export function loadStoredCandleColors(): CandleColorSettings {
   try {

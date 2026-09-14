@@ -96,6 +96,8 @@ export interface DrawingObject {
   fillOpacity?: number;
   lineWidth?: number;
   lineStyle?: 'solid' | 'dashed';
+  extendRight?: boolean;
+  extendLeft?: boolean;
   riskReward?: {
     entryPrice: number;
     stopLossPrice: number;

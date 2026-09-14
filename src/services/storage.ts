@@ -362,3 +362,17 @@ export function saveStoredActiveScriptId(id: string | null): void {
   } catch (e) {}
 }
 
+export function loadStoredMagnetMode(): boolean {
+  try {
+    return localStorage.getItem('tv_backtest_magnet_mode') === 'true';
+  } catch (e) {
+    return false;
+  }
+}
+
+export function saveStoredMagnetMode(enabled: boolean): void {
+  try {
+    localStorage.setItem('tv_backtest_magnet_mode', String(enabled));
+  } catch (e) {}
+}
+

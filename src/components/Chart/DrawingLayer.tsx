@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { useChart } from '../../context/ChartContext';
-import { DrawingObject, DrawingPoint } from '../../types/chart';
+import { Candle, DrawingObject, DrawingPoint } from '../../types/chart';
 import { formatPrice } from '../../utils/formatters';
 import { Trash2, Copy, Check, X } from 'lucide-react';
 
@@ -78,6 +78,61 @@ function hexOrRgbToRgba(color: string, opacity: number): string {
   return color;
 }
 
+function findSnappedOHLC(
+  rawTime: number,
+  rawPrice: number,
+  candles: Candle[],
+  tf: string
+): { time: number; price: number; type: 'high' | 'low' | 'open' | 'close'; candle: Candle } | null {
+  if (!candles || candles.length === 0) return null;
+
+  // Binary search for nearest candle in time
+  let low = 0;
+  let high = candles.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (candles[mid].time < rawTime) {
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  const indices = [low - 1, low, low + 1].filter((i) => i >= 0 && i < candles.length);
+  if (indices.length === 0) return null;
+
+  let bestCandle = candles[indices[0]];
+  let bestDist = Math.abs(bestCandle.time - rawTime);
+  for (const idx of indices) {
+    const dist = Math.abs(candles[idx].time - rawTime);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestCandle = candles[idx];
+    }
+  }
+
+  const tfSec = getTimeframeSeconds(tf);
+  // Snap if within 25 bars distance
+  if (bestDist > tfSec * 25) return null;
+
+  const ohlc = [
+    { type: 'high' as const, level: bestCandle.high },
+    { type: 'low' as const, level: bestCandle.low },
+    { type: 'close' as const, level: bestCandle.close },
+    { type: 'open' as const, level: bestCandle.open },
+  ];
+
+  ohlc.sort((a, b) => Math.abs(a.level - rawPrice) - Math.abs(b.level - rawPrice));
+  const closest = ohlc[0];
+
+  return {
+    time: bestCandle.time,
+    price: Number(closest.level.toFixed(1)),
+    type: closest.type,
+    candle: bestCandle,
+  };
+}
+
 export const DrawingLayer: React.FC<DrawingLayerProps> = ({
   chart,
   candleSeries,
@@ -95,6 +150,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     visibleCandles,
     timeframe,
     registerViewportCenterGetter,
+    magnetMode,
   } = useChart();
 
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -103,11 +159,29 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
   const [startPoint, setStartPoint] = useState<DrawingPoint | null>(null);
   const [currentMousePoint, setCurrentMousePoint] = useState<DrawingPoint | null>(null);
 
-  // Interaction guards to prevent premature deselection
+  // Magnet visual indicator state
+  const [activeSnap, setActiveSnap] = useState<{
+    coord: { x: number; y: number };
+    price: number;
+    type: 'high' | 'low' | 'open' | 'close';
+  } | null>(null);
+
+  // Interaction guards and two-click tracking
   const preventDeselectRef = useRef(false);
   const wasDraggingRef = useRef(false);
   const isMouseDownForCreationRef = useRef(false);
   const creationStartScreenRef = useRef<{ x: number; y: number } | null>(null);
+  const clickStepRef = useRef<number>(0);
+  const creationStartPtRef = useRef<DrawingPoint | null>(null);
+
+  // Reset creation state whenever active tool switches
+  useEffect(() => {
+    clickStepRef.current = 0;
+    creationStartPtRef.current = null;
+    setStartPoint(null);
+    setCurrentMousePoint(null);
+    setActiveSnap(null);
+  }, [activeTool]);
 
   // Force re-render on chart pan/zoom
   const [, setTick] = useState(0);
@@ -238,7 +312,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
 
   // Convert mouse event coordinates to chart time & price (resilient across whole canvas)
   const getPointFromEvent = useCallback(
-    (e: React.MouseEvent | MouseEvent): DrawingPoint | null => {
+    (e: React.MouseEvent | MouseEvent, forceNoMagnet?: boolean): DrawingPoint | null => {
       if (!chart || !candleSeries || !containerRef.current) return null;
       const rect = containerRef.current.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -266,9 +340,34 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
 
       const price = candleSeries.coordinateToPrice(y);
       if (time === null || price === null || isNaN(price)) return null;
-      return { time: Number(time), price: Number(price.toFixed(1)) };
+
+      const rawNumTime = Number(time);
+      const rawNumPrice = Number(price.toFixed(1));
+
+      // Magnet logic: active if magnetMode is ON (unless Ctrl/Cmd is held) OR magnetMode is OFF and Ctrl/Cmd is held
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+      const isMagnetActive = !forceNoMagnet && ((magnetMode && !isCtrlOrMeta) || (!magnetMode && isCtrlOrMeta));
+
+      if (isMagnetActive) {
+        const snap = findSnappedOHLC(rawNumTime, rawNumPrice, visibleCandles, timeframe);
+        if (snap) {
+          const snapX = chart.timeScale().timeToCoordinate(snap.time as Time);
+          const snapY = candleSeries.priceToCoordinate(snap.price);
+          if (snapX !== null && snapY !== null) {
+            setActiveSnap({
+              coord: { x: Number(snapX), y: Number(snapY) },
+              price: snap.price,
+              type: snap.type,
+            });
+            return { time: snap.time, price: snap.price };
+          }
+        }
+      }
+
+      setActiveSnap(null);
+      return { time: rawNumTime, price: rawNumPrice };
     },
-    [chart, candleSeries, containerRef, visibleCandles, timeframe]
+    [chart, candleSeries, containerRef, visibleCandles, timeframe, magnetMode]
   );
 
   // Convert chart time & price to pixel coordinates (smooth 60 FPS with logical interpolation)
@@ -367,11 +466,24 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
           points: [p1, p2],
           color: '#089981',
           lineWidth: 2,
+          extendRight: false,
+        });
+      } else if (activeTool === 'ray') {
+        addDrawing({
+          id: newId,
+          type: 'ray',
+          points: [p1, p2],
+          color: '#2962ff',
+          lineWidth: 2,
+          extendRight: true,
         });
       }
 
       setStartPoint(null);
       setCurrentMousePoint(null);
+      setActiveSnap(null);
+      clickStepRef.current = 0;
+      creationStartPtRef.current = null;
       setActiveTool('cursor');
       setSelectedDrawingId(newId);
 
@@ -389,41 +501,85 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
 
     isMouseDownForCreationRef.current = true;
     creationStartScreenRef.current = { x: e.clientX, y: e.clientY };
+    creationStartPtRef.current = pt;
 
-    if (!startPoint) {
-      setStartPoint(pt);
+    if (clickStepRef.current === 0) {
       setCurrentMousePoint(pt);
     }
   };
 
   const handleMouseMoveCreation = (e: React.MouseEvent) => {
-    if (activeTool === 'cursor' || !startPoint) return;
     const pt = getPointFromEvent(e);
-    if (pt) {
-      setCurrentMousePoint(pt);
+    if (!pt) return;
+
+    if (activeTool !== 'cursor') {
+      if (clickStepRef.current === 1 && startPoint) {
+        setCurrentMousePoint(pt);
+      } else if (isMouseDownForCreationRef.current && creationStartScreenRef.current) {
+        const dist = Math.hypot(
+          e.clientX - creationStartScreenRef.current.x,
+          e.clientY - creationStartScreenRef.current.y
+        );
+        if (dist > 10) {
+          if (!startPoint && creationStartPtRef.current) {
+            setStartPoint(creationStartPtRef.current);
+          }
+          setCurrentMousePoint(pt);
+        }
+      }
     }
   };
 
   const handleMouseUpCreation = (e: React.MouseEvent) => {
-    if (activeTool === 'cursor' || !startPoint) return;
+    if (activeTool === 'cursor') return;
     const pt = getPointFromEvent(e);
     if (!pt) return;
 
+    if (activeTool === 'horizontal') {
+      finalizeCreation(pt, pt);
+      isMouseDownForCreationRef.current = false;
+      creationStartScreenRef.current = null;
+      creationStartPtRef.current = null;
+      return;
+    }
+
     if (creationStartScreenRef.current) {
-      const dx = Math.abs(e.clientX - creationStartScreenRef.current.x);
-      const dy = Math.abs(e.clientY - creationStartScreenRef.current.y);
-      if (dx > 12 || dy > 12) {
-        finalizeCreation(startPoint, pt);
+      const dist = Math.hypot(
+        e.clientX - creationStartScreenRef.current.x,
+        e.clientY - creationStartScreenRef.current.y
+      );
+
+      // 1. Drag creation gesture (dist > 15px)
+      if (dist > 15 && creationStartPtRef.current) {
+        finalizeCreation(creationStartPtRef.current, pt);
+        clickStepRef.current = 0;
         isMouseDownForCreationRef.current = false;
         creationStartScreenRef.current = null;
+        creationStartPtRef.current = null;
         return;
       }
     }
 
+    // 2. Click-to-click creation gesture (dist <= 15px)
+    if (clickStepRef.current === 0) {
+      // 1st click: anchor startPoint
+      clickStepRef.current = 1;
+      setStartPoint(pt);
+      setCurrentMousePoint(pt);
+    } else if (clickStepRef.current === 1) {
+      // 2nd click: anchor endPoint and finalize
+      if (startPoint) {
+        finalizeCreation(startPoint, pt);
+      }
+      clickStepRef.current = 0;
+      creationStartPtRef.current = null;
+    }
+
     isMouseDownForCreationRef.current = false;
+    creationStartScreenRef.current = null;
   };
 
-  // Handle drawing creation clicks
+  // Handle drawing layer clicks (deselect when cursor mode)
   const handleLayerClick = (e: React.MouseEvent) => {
     if (activeTool === 'cursor') {
       if (!preventDeselectRef.current && !wasDraggingRef.current) {
@@ -431,23 +587,8 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
       }
       return;
     }
-
-    const pt = getPointFromEvent(e);
-    if (!pt) return;
-
-    if (activeTool === 'horizontal') {
-      finalizeCreation(pt, pt);
-      return;
-    }
-
-    if (!startPoint) {
-      // First click
-      setStartPoint(pt);
-      setCurrentMousePoint(pt);
-    } else {
-      // Second click -> finalize drawing and select it
-      finalizeCreation(startPoint, pt);
-    }
+    // Handled in mousedown/up for creation
+    e.stopPropagation();
   };
 
   // Start dragging a handle or the whole drawing
@@ -481,10 +622,9 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     if (!dragState) return;
 
     const handleMouseMove = (e: MouseEvent) => {
-      const curPoint = getPointFromEvent(e);
-      if (!curPoint) return;
-
       const { drawingId, handle, startMousePoint, initialPoints } = dragState;
+      const curPoint = getPointFromEvent(e, handle === 'move');
+      if (!curPoint) return;
 
       // Handle Rectangle transformations
       if (handle.startsWith('rect_')) {
@@ -583,6 +723,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
 
     const handleMouseUp = () => {
       setDragState(null);
+      setActiveSnap(null);
       setTimeout(() => {
         preventDeselectRef.current = false;
         wasDraggingRef.current = false;
@@ -657,7 +798,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
       return { x, y };
     }
 
-    if (selectedDrawing.type === 'trendline' && selectedDrawing.points.length >= 2) {
+    if ((selectedDrawing.type === 'trendline' || selectedDrawing.type === 'ray') && selectedDrawing.points.length >= 2) {
       const p1 = getCoordinates(selectedDrawing.points[0]);
       const p2 = getCoordinates(selectedDrawing.points[1]);
       if (p1.x === null || p1.y === null || p2.x === null || p2.y === null) return null;
@@ -666,7 +807,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
       const minY = Math.min(p1.y, p2.y);
       const maxY = Math.max(p1.y, p2.y);
 
-      const x = Math.max(10, Math.min(midX - 130, containerWidth - 320));
+      const x = Math.max(10, Math.min(midX - 130, containerWidth - 340));
       const y = minY < 55 ? maxY + 14 : minY - 50;
       return { x, y };
     }
@@ -699,15 +840,23 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-auto bg-[#1e222d]/95 backdrop-blur-md border border-tv-blue px-4 py-2 rounded-xl shadow-2xl flex items-center gap-3 text-xs">
           <span className="text-tv-blue font-semibold">
             {activeTool === 'rectangle' && 'Режим рисования: Прямоугольник (кликните 2 точки или протяните мышкой)'}
-            {activeTool === 'trendline' && 'Режим рисования: Трендовая линия (кликните 2 точки или протяните мышкой)'}
+            {activeTool === 'trendline' && 'Режим рисования: Трендовая линия / Отрезок (кликните 2 точки или протяните мышкой)'}
+            {activeTool === 'ray' && 'Режим рисования: Луч (кликните начало и вторую точку или протяните мышкой)'}
             {activeTool === 'horizontal' && 'Режим рисования: Горизонтальный уровень (кликните по уровню цены)'}
           </span>
+          {magnetMode && (
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-tv-blue/20 text-tv-blue border border-tv-blue/40 flex items-center gap-1">
+              🧲 Магнит вкл
+            </span>
+          )}
           <button
             onClick={(e) => {
               e.stopPropagation();
               setActiveTool('cursor');
               setStartPoint(null);
               setCurrentMousePoint(null);
+              setActiveSnap(null);
+              clickStepRef.current = 0;
             }}
             className="px-2.5 py-0.5 bg-[#2a2e39] hover:bg-[#363a45] text-white rounded text-[11px] font-medium transition-colors"
           >
@@ -952,13 +1101,36 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
             );
           }
 
-          // TRENDLINE
-          if (drawing.type === 'trendline' && drawing.points.length >= 2) {
+          // TRENDLINE & RAY
+          if ((drawing.type === 'trendline' || drawing.type === 'ray') && drawing.points.length >= 2) {
             const p1 = getCoordinates(drawing.points[0]);
             const p2 = getCoordinates(drawing.points[1]);
             if (p1.x === null || p1.y === null || p2.x === null || p2.y === null) {
               return null;
             }
+
+            const isRay = drawing.type === 'ray' || !!drawing.extendRight;
+            let lineX2 = p2.x;
+            let lineY2 = p2.y;
+
+            if (isRay) {
+              const dx = p2.x - p1.x;
+              const dy = p2.y - p1.y;
+              if (Math.abs(dx) < 0.001) {
+                lineY2 = dy >= 0 ? 3000 : -1000;
+              } else if (dx > 0) {
+                const m = dy / dx;
+                lineX2 = Math.max(3000, p2.x + 1000);
+                lineY2 = p1.y + m * (lineX2 - p1.x);
+              } else {
+                const m = dy / dx;
+                lineX2 = Math.min(-1000, p2.x - 1000);
+                lineY2 = p1.y + m * (lineX2 - p1.x);
+              }
+            }
+
+            const defaultColor = isRay ? '#2962ff' : '#089981';
+            const lineColor = drawing.color || defaultColor;
 
             return (
               <g key={drawing.id} className="select-none">
@@ -966,8 +1138,8 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                 <line
                   x1={p1.x}
                   y1={p1.y}
-                  x2={p2.x}
-                  y2={p2.y}
+                  x2={lineX2}
+                  y2={lineY2}
                   stroke="transparent"
                   strokeWidth="16"
                   pointerEvents="all"
@@ -983,49 +1155,49 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   }}
                   className="cursor-move pointer-events-auto"
                 />
-                {/* Visible Line */}
+                {/* Visible Line / Ray */}
                 <line
                   x1={p1.x}
                   y1={p1.y}
-                  x2={p2.x}
-                  y2={p2.y}
-                  stroke={drawing.color || '#089981'}
+                  x2={lineX2}
+                  y2={lineY2}
+                  stroke={lineColor}
                   strokeWidth={drawing.lineWidth || 2}
                   strokeDasharray={drawing.lineStyle === 'dashed' ? '6 3' : undefined}
                   className="pointer-events-none"
                 />
 
-                {/* Point 1 Handle */}
+                {/* Point 1 Handle (Начало) */}
                 <g
                   onMouseDown={(e) => handleStartDrag(e, drawing.id, 'line_p1')}
                   className="cursor-pointer pointer-events-auto"
                 >
-                  <title>Тяните точку 1 трендовой линии</title>
+                  <title>Начало {isRay ? 'луча' : 'линии'} (зажмите и тяните)</title>
                   <circle cx={p1.x} cy={p1.y} r="14" fill="transparent" pointerEvents="all" />
                   <circle
                     cx={p1.x}
                     cy={p1.y}
-                    r={isSelected ? '5.5' : '4'}
+                    r={isSelected ? '6' : '4.5'}
                     fill="#ffffff"
-                    stroke={drawing.color || '#089981'}
-                    strokeWidth="2"
+                    stroke={lineColor}
+                    strokeWidth="2.5"
                   />
                 </g>
 
-                {/* Point 2 Handle */}
+                {/* Point 2 Handle (Конец / Направление) */}
                 <g
                   onMouseDown={(e) => handleStartDrag(e, drawing.id, 'line_p2')}
                   className="cursor-pointer pointer-events-auto"
                 >
-                  <title>Тяните точку 2 трендовой линии</title>
+                  <title>{isRay ? 'Вторая точка / направление луча' : 'Конец линии'} (зажмите и тяните)</title>
                   <circle cx={p2.x} cy={p2.y} r="14" fill="transparent" pointerEvents="all" />
                   <circle
                     cx={p2.x}
                     cy={p2.y}
-                    r={isSelected ? '5.5' : '4'}
+                    r={isSelected ? '6' : '4.5'}
                     fill="#ffffff"
-                    stroke={drawing.color || '#089981'}
-                    strokeWidth="2"
+                    stroke={lineColor}
+                    strokeWidth="2.5"
                   />
                 </g>
               </g>
@@ -1070,18 +1242,107 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
               if (p1.x === null || p1.y === null || p2.x === null || p2.y === null) return null;
 
               return (
-                <line
-                  x1={p1.x}
-                  y1={p1.y}
-                  x2={p2.x}
-                  y2={p2.y}
-                  stroke="#089981"
-                  strokeWidth="2"
-                  strokeDasharray="4 2"
-                />
+                <g>
+                  <line
+                    x1={p1.x}
+                    y1={p1.y}
+                    x2={p2.x}
+                    y2={p2.y}
+                    stroke="#089981"
+                    strokeWidth="2"
+                    strokeDasharray="4 2"
+                  />
+                  <circle cx={p1.x} cy={p1.y} r="5" fill="#ffffff" stroke="#089981" strokeWidth="2" />
+                  <circle cx={p2.x} cy={p2.y} r="5" fill="#ffffff" stroke="#089981" strokeWidth="2" />
+                </g>
+              );
+            })()}
+
+            {activeTool === 'ray' && (() => {
+              const p1 = getCoordinates(startPoint);
+              const p2 = getCoordinates(currentMousePoint);
+              if (p1.x === null || p1.y === null || p2.x === null || p2.y === null) return null;
+
+              const dx = p2.x - p1.x;
+              const dy = p2.y - p1.y;
+              let endX = p2.x;
+              let endY = p2.y;
+
+              if (Math.abs(dx) < 0.001) {
+                endY = dy >= 0 ? 3000 : -1000;
+              } else if (dx > 0) {
+                const m = dy / dx;
+                endX = Math.max(3000, p2.x + 1000);
+                endY = p1.y + m * (endX - p1.x);
+              } else {
+                const m = dy / dx;
+                endX = Math.min(-1000, p2.x - 1000);
+                endY = p1.y + m * (endX - p1.x);
+              }
+
+              return (
+                <g>
+                  <line
+                    x1={p1.x}
+                    y1={p1.y}
+                    x2={endX}
+                    y2={endY}
+                    stroke="#2962ff"
+                    strokeWidth="2"
+                    strokeDasharray="4 2"
+                  />
+                  <circle cx={p1.x} cy={p1.y} r="5" fill="#ffffff" stroke="#2962ff" strokeWidth="2" />
+                  <circle cx={p2.x} cy={p2.y} r="5" fill="#ffffff" stroke="#2962ff" strokeWidth="2" />
+                </g>
               );
             })()}
           </>
+        )}
+
+        {/* ========================================================================= */}
+        {/* 3. MAGNET SNAP VISUAL INDICATOR                                            */}
+        {/* ========================================================================= */}
+        {activeSnap && (
+          <g className="pointer-events-none select-none">
+            <circle
+              cx={activeSnap.coord.x}
+              cy={activeSnap.coord.y}
+              r="9"
+              fill="rgba(41, 98, 255, 0.25)"
+              stroke="#2962ff"
+              strokeWidth="1.5"
+            />
+            <circle
+              cx={activeSnap.coord.x}
+              cy={activeSnap.coord.y}
+              r="3"
+              fill="#ffffff"
+            />
+            <g transform={`translate(${activeSnap.coord.x + 12}, ${activeSnap.coord.y - 12})`}>
+              <rect
+                x="0"
+                y="0"
+                width="84"
+                height="20"
+                rx="4"
+                fill="#181b24"
+                stroke="#2962ff"
+                strokeWidth="1"
+                className="shadow-lg"
+              />
+              <text
+                x="42"
+                y="14"
+                textAnchor="middle"
+                fill="#ffffff"
+                fontSize="9"
+                fontWeight="bold"
+                fontFamily="monospace"
+              >
+                {activeSnap.type.toUpperCase()}: ${formatPrice(activeSnap.price)}
+              </text>
+            </g>
+          </g>
         )}
       </svg>
 
@@ -1191,6 +1452,27 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
           >
             {selectedDrawing.lineStyle === 'dashed' ? 'Пунктир' : 'Сплошная'}
           </button>
+
+          {/* Toggle Ray / Segment for lines and rays */}
+          {(selectedDrawing.type === 'trendline' || selectedDrawing.type === 'ray') && (
+            <button
+              onClick={() => {
+                const isRayNow = selectedDrawing.type === 'ray' || !!selectedDrawing.extendRight;
+                updateDrawing(selectedDrawing.id, {
+                  type: isRayNow ? 'trendline' : 'ray',
+                  extendRight: !isRayNow,
+                });
+              }}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+                selectedDrawing.type === 'ray' || selectedDrawing.extendRight
+                  ? 'border-tv-blue bg-tv-blue/20 text-tv-blue font-medium'
+                  : 'border-[#2a2e39] text-tv-textMuted hover:text-white'
+              }`}
+              title="Переключить: Отрезок (начало и конец) / Луч (бесконечный луч вправо)"
+            >
+              {selectedDrawing.type === 'ray' || selectedDrawing.extendRight ? 'Луч ➔' : 'Отрезок'}
+            </button>
+          )}
 
           {/* Duplicate Button */}
           <button

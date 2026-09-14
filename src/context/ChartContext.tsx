@@ -72,6 +72,8 @@ import {
   saveStoredCustomScripts,
   loadStoredActiveScriptId,
   saveStoredActiveScriptId,
+  loadStoredMagnetMode,
+  saveStoredMagnetMode,
 } from '../services/storage';
 import { executeCustomScript } from '../services/scriptEngine';
 
@@ -145,6 +147,9 @@ interface ChartContextType {
   clearDrawings: () => void;
   registerViewportCenterGetter: (getter: () => { time: number; price: number } | null) => void;
   getViewportCenter: () => { time: number; price: number } | null;
+  magnetMode: boolean;
+  setMagnetMode: (enabled: boolean) => void;
+  toggleMagnetMode: () => void;
 
   // Indicators
   showFractals: boolean;
@@ -279,6 +284,20 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [activeTool, setActiveTool] = useState<DrawingTool>('cursor');
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
+  const [magnetMode, setMagnetModeState] = useState<boolean>(loadStoredMagnetMode);
+
+  const setMagnetMode = useCallback((enabled: boolean) => {
+    setMagnetModeState(enabled);
+    saveStoredMagnetMode(enabled);
+  }, []);
+
+  const toggleMagnetMode = useCallback(() => {
+    setMagnetModeState((prev) => {
+      const next = !prev;
+      saveStoredMagnetMode(next);
+      return next;
+    });
+  }, []);
 
   // Indicators
   const [showFractals, setShowFractals] = useState<boolean>(false);
@@ -1303,6 +1322,9 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     updateDrawing,
     removeDrawing,
     clearDrawings,
+    magnetMode,
+    setMagnetMode,
+    toggleMagnetMode,
     showFractals,
     setShowFractals,
     sessionsSettings,

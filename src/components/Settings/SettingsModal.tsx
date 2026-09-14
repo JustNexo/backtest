@@ -10,6 +10,7 @@ import {
   Sun,
   Moon,
   Sparkles,
+  Clock,
 } from 'lucide-react';
 import { useChart } from '../../context/ChartContext';
 import { COLOR_PALETTE_PRESETS } from '../../services/storage';
@@ -21,7 +22,7 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-type TabType = 'symbol' | 'prop_firm' | 'appearance';
+type TabType = 'symbol' | 'prop_firm' | 'appearance' | 'sessions';
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [activeTab, setActiveTab] = useState<TabType>('symbol');
@@ -34,6 +35,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     updateThemeSettings,
     feeSettings,
     updateFeeSettings,
+    sessionsSettings,
+    updateSessionsSettings,
   } = useChart();
 
   if (!isOpen) return null;
@@ -89,6 +92,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
           >
             <Moon className="w-4 h-4" />
             <span>Фон и Сетка (HEX / RGB)</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('sessions')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-medium border-b-2 transition-all ${
+              activeTab === 'sessions'
+                ? 'border-tv-blue text-tv-blue font-semibold'
+                : 'border-transparent text-tv-textMuted hover:text-white'
+            }`}
+          >
+            <Clock className="w-4 h-4" />
+            <span>Сессии рынка</span>
+            {sessionsSettings.enabled && (
+              <span className="w-1.5 h-1.5 rounded-full bg-tv-blue" />
+            )}
           </button>
         </div>
 
@@ -535,6 +552,222 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                     />
                   </label>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: MARKET SESSIONS & KILLZONES */}
+          {activeTab === 'sessions' && (
+            <div className="space-y-6">
+              {/* Master Global Toggles */}
+              <div className="p-4 bg-[#131722] border border-[#2a2e39] rounded-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-tv-blue/20 text-tv-blue flex items-center justify-center">
+                      <Clock className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-white">
+                        Индикатор сессий рынка (Market Sessions)
+                      </div>
+                      <div className="text-[11px] text-tv-textMuted">
+                        Подсветка Азиатской, Лондонской и Нью-Йоркской сессий
+                      </div>
+                    </div>
+                  </div>
+
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={sessionsSettings.enabled}
+                      onChange={(e) => updateSessionsSettings({ enabled: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-[#363a45] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-tv-blue"></div>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[#2a2e39]">
+                  <label className="flex items-center justify-between p-2.5 bg-[#181b24] border border-[#2a2e39] rounded-xl cursor-pointer">
+                    <span className="text-xs text-tv-text">Показывать High / Low сессий</span>
+                    <input
+                      type="checkbox"
+                      checked={sessionsSettings.showHighLow}
+                      onChange={(e) => updateSessionsSettings({ showHighLow: e.target.checked })}
+                      className="w-4 h-4 rounded text-tv-blue accent-tv-blue"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between p-2.5 bg-[#181b24] border border-[#2a2e39] rounded-xl cursor-pointer">
+                    <span className="text-xs text-tv-text">Показывать названия сессий</span>
+                    <input
+                      type="checkbox"
+                      checked={sessionsSettings.showLabels}
+                      onChange={(e) => updateSessionsSettings({ showLabels: e.target.checked })}
+                      className="w-4 h-4 rounded text-tv-blue accent-tv-blue"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Sessions Individual Config Cards */}
+              <div className="space-y-4">
+                <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider">
+                  Расписание и цвета торговых сессий (UTC)
+                </div>
+
+                {Object.values(sessionsSettings.sessions).map((sess) => (
+                  <div
+                    key={sess.id}
+                    className="p-4 bg-[#131722] border border-[#2a2e39] rounded-xl space-y-3.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="checkbox"
+                          checked={sess.enabled}
+                          onChange={(e) => {
+                            const updated = {
+                              ...sessionsSettings.sessions,
+                              [sess.id]: { ...sess, enabled: e.target.checked },
+                            };
+                            updateSessionsSettings({ sessions: updated });
+                          }}
+                          className="w-4 h-4 rounded text-tv-blue accent-tv-blue cursor-pointer"
+                        />
+                        <div
+                          className="w-3 h-3 rounded-full shadow-sm"
+                          style={{ backgroundColor: sess.color }}
+                        />
+                        <span className="text-xs font-bold text-white">{sess.name}</span>
+                      </div>
+
+                      <div className="text-[11px] font-mono text-tv-textMuted bg-[#181b24] px-2 py-0.5 rounded border border-[#2a2e39]">
+                        {String(sess.startHour).padStart(2, '0')}:
+                        {String(sess.startMinute).padStart(2, '0')} —{' '}
+                        {String(sess.endHour).padStart(2, '0')}:
+                        {String(sess.endMinute).padStart(2, '0')} UTC
+                      </div>
+                    </div>
+
+                    {sess.enabled && (
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-2 border-t border-[#2a2e39]">
+                        {/* Time Inputs */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <label className="text-[10px] text-tv-textMuted uppercase font-semibold block">
+                            Время начала и конца (UTC)
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min="0"
+                              max="23"
+                              value={sess.startHour}
+                              onChange={(e) => {
+                                const h = Math.max(0, Math.min(23, parseInt(e.target.value) || 0));
+                                const updated = {
+                                  ...sessionsSettings.sessions,
+                                  [sess.id]: { ...sess, startHour: h },
+                                };
+                                updateSessionsSettings({ sessions: updated });
+                              }}
+                              className="w-12 px-2 py-1 bg-[#1e222d] border border-[#2a2e39] rounded text-center text-xs text-white font-mono focus:border-tv-blue focus:outline-none"
+                            />
+                            <span className="text-tv-textMuted">:</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="59"
+                              value={sess.startMinute}
+                              onChange={(e) => {
+                                const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+                                const updated = {
+                                  ...sessionsSettings.sessions,
+                                  [sess.id]: { ...sess, startMinute: m },
+                                };
+                                updateSessionsSettings({ sessions: updated });
+                              }}
+                              className="w-12 px-2 py-1 bg-[#1e222d] border border-[#2a2e39] rounded text-center text-xs text-white font-mono focus:border-tv-blue focus:outline-none"
+                            />
+                            <span className="text-tv-textMuted text-xs px-1">до</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="23"
+                              value={sess.endHour}
+                              onChange={(e) => {
+                                const h = Math.max(0, Math.min(23, parseInt(e.target.value) || 0));
+                                const updated = {
+                                  ...sessionsSettings.sessions,
+                                  [sess.id]: { ...sess, endHour: h },
+                                };
+                                updateSessionsSettings({ sessions: updated });
+                              }}
+                              className="w-12 px-2 py-1 bg-[#1e222d] border border-[#2a2e39] rounded text-center text-xs text-white font-mono focus:border-tv-blue focus:outline-none"
+                            />
+                            <span className="text-tv-textMuted">:</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="59"
+                              value={sess.endMinute}
+                              onChange={(e) => {
+                                const m = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+                                const updated = {
+                                  ...sessionsSettings.sessions,
+                                  [sess.id]: { ...sess, endMinute: m },
+                                };
+                                updateSessionsSettings({ sessions: updated });
+                              }}
+                              className="w-12 px-2 py-1 bg-[#1e222d] border border-[#2a2e39] rounded text-center text-xs text-white font-mono focus:border-tv-blue focus:outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Color Picker */}
+                        <div className="md:col-span-4">
+                          <ColorPickerInput
+                            label="Цвет сессии"
+                            value={sess.color}
+                            onChange={(color) => {
+                              const updated = {
+                                ...sessionsSettings.sessions,
+                                [sess.id]: { ...sess, color },
+                              };
+                              updateSessionsSettings({ sessions: updated });
+                            }}
+                          />
+                        </div>
+
+                        {/* Opacity slider */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] text-tv-textMuted uppercase font-semibold">
+                            <span>Прозрачность фона</span>
+                            <span className="font-mono text-white">
+                              {Math.round(sess.bgOpacity * 100)}%
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.04"
+                            max="0.35"
+                            step="0.01"
+                            value={sess.bgOpacity}
+                            onChange={(e) => {
+                              const op = parseFloat(e.target.value);
+                              const updated = {
+                                ...sessionsSettings.sessions,
+                                [sess.id]: { ...sess, bgOpacity: op },
+                              };
+                              updateSessionsSettings({ sessions: updated });
+                            }}
+                            className="w-full h-1.5 bg-[#2a2e39] rounded-lg appearance-none cursor-pointer accent-tv-blue"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}

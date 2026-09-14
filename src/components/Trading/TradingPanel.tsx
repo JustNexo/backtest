@@ -20,14 +20,16 @@ import {
   Sparkles,
   Eye,
   EyeOff,
+  Code2,
 } from 'lucide-react';
 import { useChart } from '../../context/ChartContext';
 import { calculateRiskPosition } from '../../services/tradeEngine';
 import { formatCurrency, formatDateTime, formatPercent, formatPrice } from '../../utils/formatters';
+import { ScriptEditorTab } from './ScriptEditorTab';
 
 export const TradingPanel: React.FC = () => {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'trade' | 'position' | 'orders' | 'history' | 'metrics'>('trade');
+  const [activeTab, setActiveTab] = useState<'trade' | 'position' | 'orders' | 'history' | 'metrics' | 'scripts'>('trade');
 
   const {
     balance,
@@ -49,6 +51,7 @@ export const TradingPanel: React.FC = () => {
     orderSetup,
     updateOrderSetup,
     symbolInfo,
+    activeScript,
   } = useChart();
 
   const roundPrice = (p: number) => {
@@ -225,6 +228,21 @@ export const TradingPanel: React.FC = () => {
             >
               <BarChart3 className="w-3.5 h-3.5" />
               <span>Статистика</span>
+            </button>
+
+            <button
+              onClick={() => { setActiveTab('scripts'); setIsExpanded(true); }}
+              className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+                activeTab === 'scripts' && isExpanded
+                  ? 'bg-tv-blue text-white font-semibold'
+                  : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+              }`}
+            >
+              <Code2 className="w-3.5 h-3.5 text-[#00e5ff]" />
+              <span>Pine / Скрипты</span>
+              {activeScript && (
+                <span className="w-1.5 h-1.5 rounded-full bg-[#00e5ff] animate-pulse" />
+              )}
             </button>
           </div>
         </div>
@@ -933,6 +951,9 @@ export const TradingPanel: React.FC = () => {
               </div>
             </div>
           )}
+
+          {/* TAB 6: PINE / CUSTOM SCRIPT IDE */}
+          {activeTab === 'scripts' && <ScriptEditorTab />}
         </div>
       )}
     </div>

@@ -111,3 +111,78 @@ export interface ReplayState {
   isPlaying: boolean;
   playbackSpeed: number; // milliseconds per candle: 100, 250, 500, 1000, 2000
 }
+
+// ==========================================
+// Market Sessions & Killzones
+// ==========================================
+export type MarketSessionId = 'asia' | 'london' | 'newyork' | 'asia_kz' | 'london_kz' | 'ny_kz';
+
+export interface MarketSessionConfig {
+  id: MarketSessionId;
+  name: string;
+  enabled: boolean;
+  startHour: number;   // UTC hour 0-23
+  startMinute: number; // 0-59
+  endHour: number;     // UTC hour 0-23
+  endMinute: number;   // 0-59
+  color: string;       // Hex or rgba
+  bgOpacity: number;   // 0.05 to 0.3
+  showHighLow: boolean;
+  showLabel: boolean;
+}
+
+export interface MarketSessionsSettings {
+  enabled: boolean;
+  showHighLow: boolean;
+  showLabels: boolean;
+  sessions: Record<string, MarketSessionConfig>;
+}
+
+// ==========================================
+// Custom Scripts & Pine Engine
+// ==========================================
+export interface PlottedLine {
+  id: string;
+  name: string;
+  color: string;
+  lineWidth?: number;
+  data: Array<{ time: number; value: number }>;
+}
+
+export interface PlottedMarker {
+  time: number;
+  position: 'aboveBar' | 'belowBar' | 'inBar';
+  shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square';
+  color: string;
+  text?: string;
+}
+
+export interface PlottedBox {
+  id: string;
+  startTime: number;
+  endTime: number;
+  high: number;
+  low: number;
+  color: string;
+  fillOpacity?: number;
+  label?: string;
+}
+
+export interface ScriptOutput {
+  success: boolean;
+  executionTimeMs: number;
+  error?: string;
+  logs: string[];
+  lines: PlottedLine[];
+  markers: PlottedMarker[];
+  boxes: PlottedBox[];
+}
+
+export interface CustomScript {
+  id: string;
+  name: string;
+  description?: string;
+  code: string;
+  updatedAt: number;
+}
+

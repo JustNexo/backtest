@@ -1,4 +1,4 @@
-import { CandleColorSettings, PropFirmFeeSettings, ThemeSettings } from '../types/chart';
+import { CandleColorSettings, PropFirmFeeSettings, ThemeSettings, MarketSessionsSettings, CustomScript } from '../types/chart';
 import { RiskSettings } from '../types/trading';
 import { DEFAULT_PROP_FIRM_SETTINGS } from './tradeEngine';
 
@@ -214,3 +214,151 @@ export function saveStoredSymbol(symbol: string): void {
     localStorage.setItem(SESSION_STORAGE_KEYS.SYMBOL, symbol);
   } catch (e) {}
 }
+
+// ==========================================
+// Market Sessions Settings Storage
+// ==========================================
+
+export const DEFAULT_SESSIONS_SETTINGS: MarketSessionsSettings = {
+  enabled: false,
+  showHighLow: true,
+  showLabels: true,
+  sessions: {
+    asia: {
+      id: 'asia',
+      name: 'Азия (Tokyo)',
+      enabled: true,
+      startHour: 0,
+      startMinute: 0,
+      endHour: 8,
+      endMinute: 0,
+      color: '#f7a600',
+      bgOpacity: 0.12,
+      showHighLow: true,
+      showLabel: true,
+    },
+    london: {
+      id: 'london',
+      name: 'Лондон (London)',
+      enabled: true,
+      startHour: 7,
+      startMinute: 0,
+      endHour: 16,
+      endMinute: 0,
+      color: '#2962ff',
+      bgOpacity: 0.12,
+      showHighLow: true,
+      showLabel: true,
+    },
+    newyork: {
+      id: 'newyork',
+      name: 'Нью-Йорк (New York)',
+      enabled: true,
+      startHour: 13,
+      startMinute: 0,
+      endHour: 21,
+      endMinute: 0,
+      color: '#f23645',
+      bgOpacity: 0.12,
+      showHighLow: true,
+      showLabel: true,
+    },
+    london_kz: {
+      id: 'london_kz',
+      name: 'London Open Killzone',
+      enabled: false,
+      startHour: 7,
+      startMinute: 0,
+      endHour: 10,
+      endMinute: 0,
+      color: '#00bcd4',
+      bgOpacity: 0.18,
+      showHighLow: true,
+      showLabel: true,
+    },
+    ny_kz: {
+      id: 'ny_kz',
+      name: 'NY Open Killzone',
+      enabled: false,
+      startHour: 12,
+      startMinute: 0,
+      endHour: 15,
+      endMinute: 0,
+      color: '#e040fb',
+      bgOpacity: 0.18,
+      showHighLow: true,
+      showLabel: true,
+    },
+  },
+};
+
+const EXTRA_STORAGE_KEYS = {
+  SESSIONS_SETTINGS: 'tv_backtest_sessions_settings',
+  CUSTOM_SCRIPTS: 'tv_backtest_custom_scripts',
+  ACTIVE_SCRIPT_ID: 'tv_backtest_active_script_id',
+};
+
+export function loadStoredSessionsSettings(): MarketSessionsSettings {
+  try {
+    const raw = localStorage.getItem(EXTRA_STORAGE_KEYS.SESSIONS_SETTINGS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_SESSIONS_SETTINGS,
+        ...parsed,
+        sessions: {
+          ...DEFAULT_SESSIONS_SETTINGS.sessions,
+          ...(parsed.sessions || {}),
+        },
+      };
+    }
+  } catch (e) {
+    console.warn('Error reading stored sessions settings:', e);
+  }
+  return DEFAULT_SESSIONS_SETTINGS;
+}
+
+export function saveStoredSessionsSettings(settings: MarketSessionsSettings): void {
+  try {
+    localStorage.setItem(EXTRA_STORAGE_KEYS.SESSIONS_SETTINGS, JSON.stringify(settings));
+  } catch (e) {
+    console.warn('Error saving sessions settings:', e);
+  }
+}
+
+export function loadStoredCustomScripts(): CustomScript[] {
+  try {
+    const raw = localStorage.getItem(EXTRA_STORAGE_KEYS.CUSTOM_SCRIPTS);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.warn('Error reading stored custom scripts:', e);
+  }
+  return [];
+}
+
+export function saveStoredCustomScripts(scripts: CustomScript[]): void {
+  try {
+    localStorage.setItem(EXTRA_STORAGE_KEYS.CUSTOM_SCRIPTS, JSON.stringify(scripts));
+  } catch (e) {
+    console.warn('Error saving custom scripts:', e);
+  }
+}
+
+export function loadStoredActiveScriptId(): string | null {
+  try {
+    return localStorage.getItem(EXTRA_STORAGE_KEYS.ACTIVE_SCRIPT_ID) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function saveStoredActiveScriptId(id: string | null): void {
+  try {
+    if (id) {
+      localStorage.setItem(EXTRA_STORAGE_KEYS.ACTIVE_SCRIPT_ID, id);
+    } else {
+      localStorage.removeItem(EXTRA_STORAGE_KEYS.ACTIVE_SCRIPT_ID);
+    }
+  } catch (e) {}
+}
+

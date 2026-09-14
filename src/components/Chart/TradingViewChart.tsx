@@ -5,6 +5,7 @@ import {
   ISeriesApi,
   CandlestickSeries,
   HistogramSeries,
+  LineSeries,
   ColorType,
   CrosshairMode,
   LineStyle,
@@ -18,6 +19,8 @@ import { calculateRiskPosition } from '../../services/tradeEngine';
 import { SUPPORTED_SYMBOLS, SupportedSymbol } from '../../types/session';
 import { Scissors, GripVertical, X, Globe, ChevronDown, Check, Eye, EyeOff } from 'lucide-react';
 import { DrawingLayer } from './DrawingLayer';
+import { SessionsLayer } from './SessionsLayer';
+import { ScriptOverlayLayer } from './ScriptOverlayLayer';
 
 interface DragState {
   type:
@@ -54,6 +57,9 @@ export const TradingViewChart: React.FC = () => {
   // Fractals markers reference
   const fractalsMarkersRef = useRef<any>(null);
 
+  // Custom Script dynamically generated LineSeries map: lineId -> LineSeries
+  const scriptLineSeriesMapRef = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
+
   // Render tick to keep overlay handles locked to coordinates on chart pan/zoom
   const [, setTick] = useState(0);
   const forceUpdate = useCallback(() => setTick((t) => t + 1), []);
@@ -80,6 +86,12 @@ export const TradingViewChart: React.FC = () => {
     balance,
     riskSettings,
     showFractals,
+    sessionsSettings,
+    toggleSessions,
+    updateSessionsSettings,
+    activeScript,
+    scriptOutput,
+    clearScriptOutput,
     timezone,
     setTimezone,
     orderSetup,
@@ -452,58 +464,122 @@ export const TradingViewChart: React.FC = () => {
     forceUpdate();
   }, [visibleCandles, showVolume, candleColors.volumeUpColor, candleColors.volumeDownColor]);
 
-  // Update Williams Fractals Indicator Markers
+  // Combined Markers Effect: Williams Fractals + Custom Script Markers
   useEffect(() => {
     if (!candleSeriesRef.current) return;
 
-    if (!showFractals) {
-      if (fractalsMarkersRef.current) {
-        fractalsMarkersRef.current.setMarkers([]);
+    const allMarkers: any[] = [];
+
+    // 1. Williams Fractals
+    if (showFractals) {
+      const len = visibleCandles.length;
+      for (let i = 2; i < len - 2; i++) {
+        const c = visibleCandles[i];
+        if (
+          c.high > visibleCandles[i - 2].high &&
+          c.high > visibleCandles[i - 1].high &&
+          c.high > visibleCandles[i + 1].high &&
+          c.high > visibleCandles[i + 2].high
+        ) {
+          allMarkers.push({
+            time: c.time as Time,
+            position: 'aboveBar',
+            color: '#089981',
+            shape: 'arrowDown',
+            text: '▲',
+          });
+        }
+
+        if (
+          c.low < visibleCandles[i - 2].low &&
+          c.low < visibleCandles[i - 1].low &&
+          c.low < visibleCandles[i + 1].low &&
+          c.low < visibleCandles[i + 2].low
+        ) {
+          allMarkers.push({
+            time: c.time as Time,
+            position: 'belowBar',
+            color: '#f23645',
+            shape: 'arrowUp',
+            text: '▼',
+          });
+        }
       }
+    }
+
+    // 2. Custom Script Markers
+    if (scriptOutput && scriptOutput.success && scriptOutput.markers.length > 0) {
+      for (const m of scriptOutput.markers) {
+        allMarkers.push({
+          time: m.time as Time,
+          position: m.position,
+          shape: m.shape,
+          color: m.color,
+          text: m.text,
+        });
+      }
+    }
+
+    // Sort markers ascending by time (strict lightweight-charts requirement)
+    allMarkers.sort((a, b) => Number(a.time) - Number(b.time));
+
+    if (!fractalsMarkersRef.current) {
+      fractalsMarkersRef.current = createSeriesMarkers(candleSeriesRef.current, allMarkers);
+    } else {
+      fractalsMarkersRef.current.setMarkers(allMarkers);
+    }
+  }, [showFractals, visibleCandles, scriptOutput]);
+
+  // Dynamic Line Series for Custom Scripts
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    // Clean up existing script line series
+    scriptLineSeriesMapRef.current.forEach((series) => {
+      try {
+        chart.removeSeries(series);
+      } catch (e) {}
+    });
+    scriptLineSeriesMapRef.current.clear();
+
+    if (!scriptOutput || !scriptOutput.success || scriptOutput.lines.length === 0) {
       return;
     }
 
-    const markers: any[] = [];
-    const len = visibleCandles.length;
-    for (let i = 2; i < len - 2; i++) {
-      const c = visibleCandles[i];
-      if (
-        c.high > visibleCandles[i - 2].high &&
-        c.high > visibleCandles[i - 1].high &&
-        c.high > visibleCandles[i + 1].high &&
-        c.high > visibleCandles[i + 2].high
-      ) {
-        markers.push({
-          time: c.time as Time,
-          position: 'aboveBar',
-          color: '#089981',
-          shape: 'arrowDown',
-          text: '▲',
+    // Add each plotted line
+    scriptOutput.lines.forEach((line) => {
+      try {
+        const lineSeries = chart.addSeries(LineSeries, {
+          color: line.color,
+          lineWidth: (line.lineWidth as any) || 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          crosshairMarkerVisible: true,
+          title: line.name,
         });
+        const formattedData = line.data.map((d) => ({
+          time: d.time as Time,
+          value: d.value,
+        }));
+        lineSeries.setData(formattedData);
+        scriptLineSeriesMapRef.current.set(line.id, lineSeries);
+      } catch (err) {
+        console.warn('Error adding custom script line series:', err);
       }
+    });
 
-      if (
-        c.low < visibleCandles[i - 2].low &&
-        c.low < visibleCandles[i - 1].low &&
-        c.low < visibleCandles[i + 1].low &&
-        c.low < visibleCandles[i + 2].low
-      ) {
-        markers.push({
-          time: c.time as Time,
-          position: 'belowBar',
-          color: '#f23645',
-          shape: 'arrowUp',
-          text: '▼',
+    return () => {
+      if (chartRef.current) {
+        scriptLineSeriesMapRef.current.forEach((series) => {
+          try {
+            chartRef.current?.removeSeries(series);
+          } catch (e) {}
         });
+        scriptLineSeriesMapRef.current.clear();
       }
-    }
-
-    if (!fractalsMarkersRef.current) {
-      fractalsMarkersRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
-    } else {
-      fractalsMarkersRef.current.setMarkers(markers);
-    }
-  }, [showFractals, visibleCandles]);
+    };
+  }, [scriptOutput]);
 
   // Update Active Position Price Lines
   useEffect(() => {
@@ -865,6 +941,36 @@ export const TradingViewChart: React.FC = () => {
             <span>+ Объем</span>
           </button>
         )}
+
+        {/* Sessions Indicator Legend Badge */}
+        {sessionsSettings.enabled && (
+          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
+            <span className="w-1.5 h-1.5 rounded-full bg-tv-blue animate-pulse" />
+            <span className="text-tv-blue font-semibold font-sans">Сессии: Вкл</span>
+            <button
+              onClick={() => toggleSessions()}
+              title="Выключить отображение сессий"
+              className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+
+        {/* Custom Script Indicator Legend Badge */}
+        {activeScript && scriptOutput && scriptOutput.success && (
+          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00e5ff]" />
+            <span className="text-[#00e5ff] font-semibold font-sans">{activeScript.name}</span>
+            <button
+              onClick={() => clearScriptOutput()}
+              title="Удалить пользовательский скрипт с графика"
+              className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* INTERACTIVE DRAGGABLE BADGES OVERLAY */}
@@ -1139,6 +1245,20 @@ export const TradingViewChart: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Market Sessions Layer (Tokyo, London, New York) */}
+      <SessionsLayer
+        chart={chartInstance}
+        candleSeries={candleSeriesInstance}
+        containerRef={containerRef}
+      />
+
+      {/* Custom Script Zones / Imbalances Layer */}
+      <ScriptOverlayLayer
+        chart={chartInstance}
+        candleSeries={candleSeriesInstance}
+        containerRef={containerRef}
+      />
 
       {/* Interactive Drawing Layer (Rectangles, Lines, Levels) */}
       <DrawingLayer

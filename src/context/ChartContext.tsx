@@ -9,6 +9,9 @@ import {
   ReplayState,
   ThemeSettings,
   Timeframe,
+  MarketSessionsSettings,
+  CustomScript,
+  ScriptOutput,
 } from '../types/chart';
 import {
   BacktestMetrics,
@@ -46,6 +49,7 @@ import {
   DEFAULT_CANDLE_COLORS,
   DEFAULT_RISK_SETTINGS,
   DEFAULT_THEME_SETTINGS,
+  DEFAULT_SESSIONS_SETTINGS,
   loadStoredCandleColors,
   loadStoredPropFirmSettings,
   loadStoredRiskSettings,
@@ -62,7 +66,14 @@ import {
   saveStoredRiskSettings,
   saveStoredThemeSettings,
   saveStoredTimezone,
+  loadStoredSessionsSettings,
+  saveStoredSessionsSettings,
+  loadStoredCustomScripts,
+  saveStoredCustomScripts,
+  loadStoredActiveScriptId,
+  saveStoredActiveScriptId,
 } from '../services/storage';
+import { executeCustomScript } from '../services/scriptEngine';
 
 interface ChartContextType {
   symbol: SupportedSymbol;
@@ -138,6 +149,21 @@ interface ChartContextType {
   // Indicators
   showFractals: boolean;
   setShowFractals: (show: boolean) => void;
+
+  // Market Sessions & Killzones
+  sessionsSettings: MarketSessionsSettings;
+  updateSessionsSettings: (settings: Partial<MarketSessionsSettings>) => void;
+  toggleSessions: () => void;
+
+  // Custom Scripts (Pine / Script Engine)
+  customScripts: CustomScript[];
+  activeScript: CustomScript | null;
+  scriptOutput: ScriptOutput | null;
+  setActiveScript: (script: CustomScript | null) => void;
+  runCustomScript: (code: string, scriptName?: string) => ScriptOutput;
+  saveCustomScript: (script: CustomScript) => void;
+  deleteCustomScript: (id: string) => void;
+  clearScriptOutput: () => void;
 
   // Timezone
   timezone: string;
@@ -256,6 +282,18 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Indicators
   const [showFractals, setShowFractals] = useState<boolean>(false);
+
+  // Market Sessions
+  const [sessionsSettings, setSessionsSettings] = useState<MarketSessionsSettings>(loadStoredSessionsSettings);
+
+  // Custom Scripts
+  const [customScripts, setCustomScripts] = useState<CustomScript[]>(loadStoredCustomScripts);
+  const [activeScript, setActiveScriptState] = useState<CustomScript | null>(() => {
+    const activeId = loadStoredActiveScriptId();
+    const stored = loadStoredCustomScripts();
+    return stored.find((s) => s.id === activeId) || null;
+  });
+  const [scriptOutput, setScriptOutput] = useState<ScriptOutput | null>(null);
 
   // Timezone
   const [timezone, setTimezoneState] = useState<string>(loadStoredTimezone);
@@ -889,6 +927,95 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     updateCandleColors({ showVolume: !showVolume });
   }, [showVolume, updateCandleColors]);
 
+  // Market Sessions Handlers
+  const updateSessionsSettings = useCallback((settings: Partial<MarketSessionsSettings>) => {
+    setSessionsSettings((prev) => {
+      const next = {
+        ...prev,
+        ...settings,
+        sessions: {
+          ...prev.sessions,
+          ...(settings.sessions || {}),
+        },
+      };
+      saveStoredSessionsSettings(next);
+      return next;
+    });
+  }, []);
+
+  const toggleSessions = useCallback(() => {
+    setSessionsSettings((prev) => {
+      const next = { ...prev, enabled: !prev.enabled };
+      saveStoredSessionsSettings(next);
+      return next;
+    });
+  }, []);
+
+  // Custom Scripts Handlers
+  const setActiveScript = useCallback((script: CustomScript | null) => {
+    setActiveScriptState(script);
+    saveStoredActiveScriptId(script ? script.id : null);
+    if (!script) {
+      setScriptOutput(null);
+    }
+  }, []);
+
+  const runCustomScript = useCallback((code: string, scriptName: string = 'Кастомный скрипт'): ScriptOutput => {
+    const result = executeCustomScript(code, visibleCandles);
+    setScriptOutput(result);
+    if (result.success) {
+      const scriptObj: CustomScript = {
+        id: activeScript?.id || `script_${Date.now()}`,
+        name: scriptName,
+        code,
+        updatedAt: Date.now(),
+      };
+      setActiveScriptState(scriptObj);
+      saveStoredActiveScriptId(scriptObj.id);
+    }
+    return result;
+  }, [visibleCandles, activeScript]);
+
+  const saveCustomScript = useCallback((script: CustomScript) => {
+    setCustomScripts((prev) => {
+      const existingIdx = prev.findIndex((s) => s.id === script.id);
+      let updated: CustomScript[];
+      if (existingIdx >= 0) {
+        updated = [...prev];
+        updated[existingIdx] = script;
+      } else {
+        updated = [script, ...prev];
+      }
+      saveStoredCustomScripts(updated);
+      return updated;
+    });
+  }, []);
+
+  const deleteCustomScript = useCallback((id: string) => {
+    setCustomScripts((prev) => {
+      const updated = prev.filter((s) => s.id !== id);
+      saveStoredCustomScripts(updated);
+      return updated;
+    });
+    if (activeScript?.id === id) {
+      setActiveScript(null);
+    }
+  }, [activeScript, setActiveScript]);
+
+  const clearScriptOutput = useCallback(() => {
+    setScriptOutput(null);
+    setActiveScriptState(null);
+    saveStoredActiveScriptId(null);
+  }, []);
+
+  // Automatically re-run active script when visibleCandles change
+  useEffect(() => {
+    if (activeScript && scriptOutput?.success && visibleCandles.length > 0) {
+      const result = executeCustomScript(activeScript.code, visibleCandles);
+      setScriptOutput(result);
+    }
+  }, [visibleCandles.length, activeScript?.code]);
+
   const updateThemeSettings = useCallback((theme: Partial<ThemeSettings>) => {
     setThemeSettings((prev) => {
       const next = { ...prev, ...theme };
@@ -1178,6 +1305,17 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     clearDrawings,
     showFractals,
     setShowFractals,
+    sessionsSettings,
+    updateSessionsSettings,
+    toggleSessions,
+    customScripts,
+    activeScript,
+    scriptOutput,
+    setActiveScript,
+    runCustomScript,
+    saveCustomScript,
+    deleteCustomScript,
+    clearScriptOutput,
     timezone,
     setTimezone,
     orderSetup,

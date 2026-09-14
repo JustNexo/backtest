@@ -261,7 +261,7 @@ export const TradingPanel: React.FC = () => {
                 netPnlTotal >= 0 ? 'text-tv-green' : 'text-tv-red'
               }`}
             >
-              {formatCurrency(netPnlTotal)} ({formatPercent(netPnlTotalPercent)})
+              {formatCurrency(netPnlTotal, 2, { showPlus: true })} ({formatPercent(netPnlTotalPercent)})
             </span>
           </div>
 
@@ -696,7 +696,7 @@ export const TradingPanel: React.FC = () => {
                           activePosition.unrealizedNetPnl >= 0 ? 'text-tv-green' : 'text-tv-red'
                         }`}
                       >
-                        {formatCurrency(activePosition.unrealizedNetPnl)}
+                        {formatCurrency(activePosition.unrealizedNetPnl, 2, { showPlus: true })}
                       </span>
                     </div>
                   </div>
@@ -860,7 +860,7 @@ export const TradingPanel: React.FC = () => {
                               t.netPnl >= 0 ? 'text-tv-green' : 'text-tv-red'
                             }`}
                           >
-                            {formatCurrency(t.netPnl)}
+                            {formatCurrency(t.netPnl, 2, { showPlus: true })}
                           </td>
                           <td
                             className={`py-2 px-3 ${
@@ -919,7 +919,7 @@ export const TradingPanel: React.FC = () => {
                     metrics.netProfit >= 0 ? 'text-tv-green' : 'text-tv-red'
                   }`}
                 >
-                  {formatCurrency(metrics.netProfit)}
+                  {formatCurrency(metrics.netProfit, 2, { showPlus: true })}
                 </div>
               </div>
 
@@ -937,7 +937,7 @@ export const TradingPanel: React.FC = () => {
                   Макс. просадка
                 </div>
                 <div className="text-base font-bold text-tv-red mt-1 font-mono">
-                  ${metrics.maxDrawdown} ({metrics.maxDrawdownPercent}%)
+                  {formatCurrency(metrics.maxDrawdown, 2)} ({metrics.maxDrawdownPercent}%)
                 </div>
               </div>
 
@@ -946,7 +946,7 @@ export const TradingPanel: React.FC = () => {
                   Комиссии + Свопы
                 </div>
                 <div className="text-base font-bold text-tv-yellow mt-1 font-mono">
-                  -${(metrics.totalCommissions + metrics.totalSwaps).toFixed(2)}
+                  {formatCurrency(-(metrics.totalCommissions + metrics.totalSwaps), 2)}
                 </div>
               </div>
             </div>

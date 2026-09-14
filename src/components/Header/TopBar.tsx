@@ -336,12 +336,12 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
               <Shield className="w-3.5 h-3.5 text-tv-blue" />
               <span className="text-tv-textMuted hidden 2xl:inline">День:</span>
               <span className={dailyUsedRatio > 80 ? 'text-tv-red font-bold' : 'text-white'}>
-                -${formatCurrency(propFirmEvaluation.dailyLossUsd, 0)} / -${formatCurrency(propFirmEvaluation.dailyLimitUsd, 0)}
+                {formatCurrency(propFirmEvaluation.dailyLossUsd, 0)} / {formatCurrency(propFirmEvaluation.dailyLimitUsd, 0)}
               </span>
               <span className="text-tv-textMuted mx-0.5">|</span>
               <span className="text-tv-textMuted hidden 2xl:inline">Цель:</span>
               <span className="text-[#089981] font-semibold">
-                +${formatCurrency(propFirmEvaluation.currentProfitUsd, 0)} / +${formatCurrency(propFirmEvaluation.profitTargetUsd, 0)}
+                {formatCurrency(propFirmEvaluation.currentProfitUsd, 0, { showPlus: true })} / {formatCurrency(propFirmEvaluation.profitTargetUsd, 0)}
               </span>
               <ChevronDown className="w-3 h-3 text-tv-textMuted" />
             </button>
@@ -372,7 +372,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
                   <div className="flex items-center justify-between text-xs font-mono mb-1">
                     <span className="text-tv-textMuted">Дневной убыток (лимит {propFirmRules.dailyLossLimitPercent}%):</span>
                     <span className={dailyUsedRatio > 80 ? 'text-tv-red font-bold' : 'text-white'}>
-                      ${formatCurrency(propFirmEvaluation.dailyLossUsd, 0)} / ${formatCurrency(propFirmEvaluation.dailyLimitUsd, 0)}
+                      {formatCurrency(propFirmEvaluation.dailyLossUsd, 0)} / {formatCurrency(propFirmEvaluation.dailyLimitUsd, 0)}
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-[#131722] rounded-full overflow-hidden">
@@ -390,7 +390,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
                   <div className="flex items-center justify-between text-xs font-mono mb-1">
                     <span className="text-tv-textMuted">Макс. просадка (лимит {propFirmRules.overallLossLimitPercent}%):</span>
                     <span className={overallUsedRatio > 80 ? 'text-tv-red font-bold' : 'text-white'}>
-                      ${formatCurrency(propFirmEvaluation.overallDrawdownUsd, 0)} / ${formatCurrency(propFirmEvaluation.overallLimitUsd, 0)}
+                      {formatCurrency(propFirmEvaluation.overallDrawdownUsd, 0)} / {formatCurrency(propFirmEvaluation.overallLimitUsd, 0)}
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-[#131722] rounded-full overflow-hidden">
@@ -408,7 +408,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
                   <div className="flex items-center justify-between text-xs font-mono mb-1">
                     <span className="text-tv-textMuted">Цель прибыли ({propFirmRules.profitTargetPercent}%):</span>
                     <span className="text-[#089981] font-bold">
-                      ${formatCurrency(propFirmEvaluation.currentProfitUsd, 0)} / ${formatCurrency(propFirmEvaluation.profitTargetUsd, 0)}
+                      {formatCurrency(propFirmEvaluation.currentProfitUsd, 0, { showPlus: true })} / {formatCurrency(propFirmEvaluation.profitTargetUsd, 0)}
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-[#131722] rounded-full overflow-hidden">

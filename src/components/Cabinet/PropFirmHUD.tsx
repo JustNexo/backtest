@@ -65,7 +65,7 @@ export const PropFirmHUD: React.FC<PropFirmHUDProps> = ({ onOpenCabinet }) => {
             <span className="px-1.5 py-0.2 bg-tv-blue/20 text-tv-blue border border-tv-blue/30 rounded uppercase font-semibold text-[10px]">
               {propFirmRules.preset.replace('_', ' ')}
             </span>
-            <span>Депо: ${formatCurrency(initialBalance, 0)}</span>
+            <span>Депо: {formatCurrency(initialBalance, 0)}</span>
           </div>
         )}
       </div>
@@ -79,7 +79,7 @@ export const PropFirmHUD: React.FC<PropFirmHUDProps> = ({ onOpenCabinet }) => {
             <div className="flex flex-col">
               <div className="flex items-center justify-between text-[10px]">
                 <span className={dailyUsedRatio > 70 ? 'text-tv-red font-bold' : 'text-tv-text'}>
-                  -${formatCurrency(dailyLossUsd, 0)} / -${formatCurrency(dailyLimitUsd, 0)}
+                  {formatCurrency(dailyLossUsd, 0)} / {formatCurrency(dailyLimitUsd, 0)}
                 </span>
               </div>
               <div className="w-20 lg:w-28 h-1.5 bg-[#2a2e39] rounded-full overflow-hidden">
@@ -103,7 +103,7 @@ export const PropFirmHUD: React.FC<PropFirmHUDProps> = ({ onOpenCabinet }) => {
             <div className="flex flex-col">
               <div className="flex items-center justify-between text-[10px]">
                 <span className={overallUsedRatio > 70 ? 'text-tv-red font-bold' : 'text-tv-text'}>
-                  -${formatCurrency(overallDrawdownUsd, 0)} / -${formatCurrency(overallLimitUsd, 0)}
+                  {formatCurrency(overallDrawdownUsd, 0)} / {formatCurrency(overallLimitUsd, 0)}
                 </span>
               </div>
               <div className="w-20 lg:w-28 h-1.5 bg-[#2a2e39] rounded-full overflow-hidden">
@@ -127,7 +127,7 @@ export const PropFirmHUD: React.FC<PropFirmHUDProps> = ({ onOpenCabinet }) => {
             <div className="flex flex-col">
               <div className="flex items-center justify-between text-[10px]">
                 <span className={currentProfitUsd >= profitTargetUsd ? 'text-tv-green font-bold' : 'text-tv-text'}>
-                  +${formatCurrency(Math.max(0, currentProfitUsd), 0)} / +${formatCurrency(profitTargetUsd, 0)}
+                  {formatCurrency(Math.max(0, currentProfitUsd), 0, { showPlus: true })} / {formatCurrency(profitTargetUsd, 0)}
                 </span>
               </div>
               <div className="w-20 lg:w-28 h-1.5 bg-[#2a2e39] rounded-full overflow-hidden">

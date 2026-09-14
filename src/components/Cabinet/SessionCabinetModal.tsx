@@ -307,14 +307,14 @@ export const SessionCabinetModal: React.FC<SessionCabinetModalProps> = ({ isOpen
                 <div className="p-4 bg-[#131722] border border-[#2a2e39] rounded-xl">
                   <span className="text-xs text-tv-textMuted">Стартовый капитал</span>
                   <div className="text-xl font-bold font-mono text-white mt-1">
-                    ${formatCurrency(initialBalance, 2)}
+                    {formatCurrency(initialBalance, 2)}
                   </div>
                 </div>
 
                 <div className="p-4 bg-[#131722] border border-[#2a2e39] rounded-xl">
                   <span className="text-xs text-tv-textMuted">Текущий баланс</span>
                   <div className="text-xl font-bold font-mono text-white mt-1">
-                    ${formatCurrency(balance, 2)}
+                    {formatCurrency(balance, 2)}
                   </div>
                 </div>
 
@@ -325,8 +325,7 @@ export const SessionCabinetModal: React.FC<SessionCabinetModalProps> = ({ isOpen
                       balance >= initialBalance ? 'text-tv-green' : 'text-tv-red'
                     }`}
                   >
-                    {balance >= initialBalance ? '+' : ''}
-                    ${formatCurrency(balance - initialBalance, 2)} (
+                    {formatCurrency(balance - initialBalance, 2, { showPlus: true })} (
                     {formatPercent(((balance - initialBalance) / (initialBalance || 1)) * 100)})
                   </div>
                 </div>
@@ -386,7 +385,7 @@ export const SessionCabinetModal: React.FC<SessionCabinetModalProps> = ({ isOpen
                       <div className="flex justify-between mb-1">
                         <span className="text-tv-textMuted">Дневной лимит потерь ({propFirmRules.dailyLossLimitPercent}%):</span>
                         <span className={propFirmEvaluation.isDailyBreached ? 'text-tv-red font-bold' : 'text-white'}>
-                          -${formatCurrency(propFirmEvaluation.dailyLossUsd, 2)} / -${formatCurrency(propFirmEvaluation.dailyLimitUsd, 2)} (осталось ${formatCurrency(Math.max(0, propFirmEvaluation.dailyLimitUsd - propFirmEvaluation.dailyLossUsd), 2)})
+                          {formatCurrency(propFirmEvaluation.dailyLossUsd, 2)} / {formatCurrency(propFirmEvaluation.dailyLimitUsd, 2)} (осталось {formatCurrency(Math.max(0, propFirmEvaluation.dailyLimitUsd - propFirmEvaluation.dailyLossUsd), 2)})
                         </span>
                       </div>
                       <div className="w-full h-2.5 bg-[#2a2e39] rounded-full overflow-hidden">
@@ -410,7 +409,7 @@ export const SessionCabinetModal: React.FC<SessionCabinetModalProps> = ({ isOpen
                       <div className="flex justify-between mb-1">
                         <span className="text-tv-textMuted">Максимальная просадка ({propFirmRules.overallLossLimitPercent}%):</span>
                         <span className={propFirmEvaluation.isOverallBreached ? 'text-tv-red font-bold' : 'text-white'}>
-                          -${formatCurrency(propFirmEvaluation.overallDrawdownUsd, 2)} / -${formatCurrency(propFirmEvaluation.overallLimitUsd, 2)} (осталось ${formatCurrency(Math.max(0, propFirmEvaluation.overallLimitUsd - propFirmEvaluation.overallDrawdownUsd), 2)})
+                          {formatCurrency(propFirmEvaluation.overallDrawdownUsd, 2)} / {formatCurrency(propFirmEvaluation.overallLimitUsd, 2)} (осталось {formatCurrency(Math.max(0, propFirmEvaluation.overallLimitUsd - propFirmEvaluation.overallDrawdownUsd), 2)})
                         </span>
                       </div>
                       <div className="w-full h-2.5 bg-[#2a2e39] rounded-full overflow-hidden">
@@ -434,7 +433,7 @@ export const SessionCabinetModal: React.FC<SessionCabinetModalProps> = ({ isOpen
                       <div className="flex justify-between mb-1">
                         <span className="text-tv-textMuted">Цель по прибыли ({propFirmRules.profitTargetPercent}%):</span>
                         <span className={propFirmEvaluation.isTargetPassed ? 'text-tv-green font-bold' : 'text-white'}>
-                          +${formatCurrency(Math.max(0, propFirmEvaluation.currentProfitUsd), 2)} / +${formatCurrency(propFirmEvaluation.profitTargetUsd, 2)}
+                          {formatCurrency(Math.max(0, propFirmEvaluation.currentProfitUsd), 2, { showPlus: true })} / {formatCurrency(propFirmEvaluation.profitTargetUsd, 2)}
                         </span>
                       </div>
                       <div className="w-full h-2.5 bg-[#2a2e39] rounded-full overflow-hidden">
@@ -621,7 +620,7 @@ export const SessionCabinetModal: React.FC<SessionCabinetModalProps> = ({ isOpen
                           : 'bg-[#131722] border border-[#2a2e39] text-tv-text hover:text-white'
                       }`}
                     >
-                      ${formatCurrency(cap, 0)}
+                      {formatCurrency(cap, 0)}
                     </button>
                   ))}
                 </div>
@@ -761,7 +760,7 @@ export const SessionCabinetModal: React.FC<SessionCabinetModalProps> = ({ isOpen
                         </div>
 
                         <div className="text-xs text-tv-textMuted mt-1 flex items-center gap-4 font-mono">
-                          <span>Баланс: ${formatCurrency(sess.currentBalance, 0)}</span>
+                          <span>Баланс: {formatCurrency(sess.currentBalance, 0)}</span>
                           <span>Сделок: {sess.trades.length}</span>
                           <span>Период: {new Date(sess.startDate * 1000).toLocaleDateString()}</span>
                         </div>
@@ -860,7 +859,7 @@ export const SessionCabinetModal: React.FC<SessionCabinetModalProps> = ({ isOpen
                             <td className="p-2.5">${formatPrice(t.entryPrice)}</td>
                             <td className="p-2.5">${formatPrice(t.exitPrice)}</td>
                             <td className={`p-2.5 font-bold ${isWin ? 'text-tv-green' : 'text-tv-red'}`}>
-                              {isWin ? '+' : ''}${formatCurrency(t.netPnl, 2)}
+                              {formatCurrency(t.netPnl, 2, { showPlus: true })}
                             </td>
                             <td className={`p-2.5 ${isWin ? 'text-tv-green' : 'text-tv-red'}`}>
                               {formatPercent(t.returnPercent)}

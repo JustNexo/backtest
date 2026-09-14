@@ -14,7 +14,7 @@ import {
   createSeriesMarkers,
 } from 'lightweight-charts';
 import { useChart } from '../../context/ChartContext';
-import { formatCurrency, formatDateTime, formatPercent, formatPrice, formatTickMark, formatVolume, TIMEZONE_OPTIONS } from '../../utils/formatters';
+import { formatDateTime, formatPrice, formatTickMark, formatVolume, TIMEZONE_OPTIONS } from '../../utils/formatters';
 import { calculateRiskPosition } from '../../services/tradeEngine';
 import { SUPPORTED_SYMBOLS, SupportedSymbol } from '../../types/session';
 import { Scissors, GripVertical, X, Globe, ChevronDown, Check, Eye, EyeOff } from 'lucide-react';

@@ -20,14 +20,25 @@ export function formatPrice(price: number, decimals: number = 1): string {
   });
 }
 
-export function formatCurrency(amount: number, decimals: number = 2): string {
-  if (amount === undefined || amount === null || isNaN(amount)) return '$0.00';
-  const prefix = amount >= 0 ? '+$' : '-$';
+export function formatCurrency(
+  amount: number,
+  decimals: number = 2,
+  options?: { showPlus?: boolean }
+): string {
+  if (amount === undefined || amount === null || isNaN(amount)) {
+    return decimals > 0 ? '$0.00' : '$0';
+  }
   const abs = Math.abs(amount).toLocaleString('en-US', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
-  return `${prefix}${abs}`;
+  if (amount > 0 && options?.showPlus) {
+    return `+$${abs}`;
+  }
+  if (amount < 0) {
+    return `-$${abs}`;
+  }
+  return `$${abs}`;
 }
 
 export function formatPercent(val: number, decimals: number = 2): string {

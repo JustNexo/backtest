@@ -291,10 +291,10 @@ export const CabinetPage: React.FC = () => {
                   <DollarSign className="w-4 h-4 text-tv-blue" />
                 </div>
                 <div className="text-2xl font-bold font-mono text-white">
-                  ${formatCurrency(balance, 2)}
+                  {formatCurrency(balance, 2)}
                 </div>
                 <div className="text-[11px] text-tv-textMuted mt-1">
-                  Депозит: ${formatCurrency(initialBalance, 0)}
+                  Депозит: {formatCurrency(initialBalance, 0)}
                 </div>
               </div>
 
@@ -304,7 +304,7 @@ export const CabinetPage: React.FC = () => {
                   <TrendingUp className={`w-4 h-4 ${totalNetPnl >= 0 ? 'text-[#089981]' : 'text-tv-red'}`} />
                 </div>
                 <div className={`text-2xl font-bold font-mono ${totalNetPnl >= 0 ? 'text-[#089981]' : 'text-tv-red'}`}>
-                  {totalNetPnl >= 0 ? '+' : ''}${formatCurrency(totalNetPnl, 2)}
+                  {formatCurrency(totalNetPnl, 2, { showPlus: true })}
                 </div>
                 <div className={`text-[11px] font-mono mt-1 ${totalNetPnl >= 0 ? 'text-[#089981]' : 'text-tv-red'}`}>
                   {formatPercent(totalReturnPercent)} от стартового депо
@@ -345,7 +345,7 @@ export const CabinetPage: React.FC = () => {
                   )}
                 </div>
                 <div className="text-[11px] text-tv-textMuted mt-1">
-                  Цель: +${formatCurrency(propFirmEvaluation.profitTargetUsd, 0)} ({propFirmRules.profitTargetPercent}%)
+                  Цель: {formatCurrency(propFirmEvaluation.profitTargetUsd, 0, { showPlus: true })} ({propFirmRules.profitTargetPercent}%)
                 </div>
               </div>
             </div>
@@ -468,14 +468,14 @@ export const CabinetPage: React.FC = () => {
                         <div>
                           <div className="text-[10px] text-tv-textMuted uppercase font-semibold">Баланс</div>
                           <div className="text-sm font-bold font-mono text-white">
-                            ${formatCurrency(sess.currentBalance, 2)}
+                            {formatCurrency(sess.currentBalance, 2)}
                           </div>
                         </div>
 
                         <div className="text-right">
                           <div className="text-[10px] text-tv-textMuted uppercase font-semibold">Чистый PnL</div>
                           <div className={`text-sm font-bold font-mono ${sessPnl >= 0 ? 'text-[#089981]' : 'text-tv-red'}`}>
-                            {sessPnl >= 0 ? '+' : ''}${formatCurrency(sessPnl, 2)} ({formatPercent(sessReturn)})
+                            {formatCurrency(sessPnl, 2, { showPlus: true })} ({formatPercent(sessReturn)})
                           </div>
                         </div>
                       </div>
@@ -706,7 +706,7 @@ export const CabinetPage: React.FC = () => {
                           : 'bg-[#131722] border-[#2a2e39] text-tv-text hover:text-white hover:border-white/30'
                       }`}
                     >
-                      ${formatCurrency(cap, 0)}
+                      {formatCurrency(cap, 0)}
                     </button>
                   ))}
                 </div>
@@ -937,7 +937,7 @@ export const CabinetPage: React.FC = () => {
                               t.netPnl >= 0 ? 'text-[#089981]' : 'text-tv-red'
                             }`}
                           >
-                            {t.netPnl >= 0 ? '+' : ''}${formatCurrency(t.netPnl, 2)}
+                            {formatCurrency(t.netPnl, 2, { showPlus: true })}
                           </td>
                           <td
                             className={`py-2.5 px-3 font-semibold ${

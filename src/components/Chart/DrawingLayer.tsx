@@ -158,9 +158,36 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     registerViewportCenterGetter,
     magnetMode,
     symbolInfo,
+    pushDrawingHistory,
   } = useChart();
 
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const mouseDownCoordRef = useRef<{ x: number; y: number; id: string } | null>(null);
+  const preDragSnapshotRef = useRef<DrawingObject[] | null>(null);
+  const hasMovedDuringDragRef = useRef<boolean>(false);
+
+  const forwardMouseDownToChart = (e: React.MouseEvent) => {
+    const canvas = containerRef.current?.querySelector('canvas');
+    if (canvas) {
+      const simEvent = new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        detail: e.detail,
+        screenX: e.screenX,
+        screenY: e.screenY,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        button: e.button,
+        buttons: e.buttons,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+      });
+      canvas.dispatchEvent(simEvent);
+    }
+  };
 
   // Settings modal & templates state
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -671,6 +698,9 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     const drawing = drawings.find((d) => d.id === drawingId);
     if (!drawing) return;
 
+    preDragSnapshotRef.current = JSON.parse(JSON.stringify(drawings));
+    hasMovedDuringDragRef.current = false;
+
     setDragState({
       drawingId,
       handle,
@@ -687,6 +717,8 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
       const { drawingId, handle, startMousePoint, initialPoints } = dragState;
       const curPoint = getPointFromEvent(e, handle === 'move');
       if (!curPoint) return;
+
+      hasMovedDuringDragRef.current = true;
 
       // Handle Rectangle transformations
       if (handle.startsWith('rect_')) {
@@ -784,6 +816,11 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     };
 
     const handleMouseUp = () => {
+      if (hasMovedDuringDragRef.current && preDragSnapshotRef.current) {
+        pushDrawingHistory(preDragSnapshotRef.current);
+        preDragSnapshotRef.current = null;
+        hasMovedDuringDragRef.current = false;
+      }
       setDragState(null);
       setActiveSnap(null);
       setTimeout(() => {
@@ -798,7 +835,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [dragState, getPointFromEvent, updateDrawing]);
+  }, [dragState, getPointFromEvent, updateDrawing, pushDrawingHistory]);
 
   // Keyboard shortcut listeners (Escape to deselect, Delete to remove)
   useEffect(() => {
@@ -978,22 +1015,35 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   strokeWidth={drawing.lineWidth || 1}
                   strokeDasharray={strokeDash}
                   onMouseDown={(e) => {
-                    if (drawing.isLocked) return;
-                    e.stopPropagation();
-                    preventDeselectRef.current = true;
-                    handleStartDrag(e, drawing.id, 'move');
+                    if (isSelected && !drawing.isLocked) {
+                      e.stopPropagation();
+                      preventDeselectRef.current = true;
+                      handleStartDrag(e, drawing.id, 'move');
+                    } else {
+                      mouseDownCoordRef.current = { x: e.clientX, y: e.clientY, id: drawing.id };
+                      forwardMouseDownToChart(e);
+                    }
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setSelectedDrawingId(drawing.id);
+                    const start = mouseDownCoordRef.current;
+                    if (start && start.id === drawing.id) {
+                      const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+                      if (dist < 6) {
+                        setSelectedDrawingId(drawing.id);
+                      }
+                    } else {
+                      setSelectedDrawingId(drawing.id);
+                    }
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
+                    setSelectedDrawingId(drawing.id);
                     setModalDrawing(drawing);
                     setIsSettingsModalOpen(true);
                   }}
                   className={`tv-drawing-element pointer-events-auto transition-colors ${
-                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-move') : 'cursor-pointer hover:opacity-90'
+                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-move') : 'cursor-pointer hover:opacity-95'
                   }`}
                 />
 
@@ -1151,22 +1201,36 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   strokeWidth="14"
                   pointerEvents="all"
                   onMouseDown={(e) => {
-                    e.stopPropagation();
-                    preventDeselectRef.current = true;
-                    handleStartDrag(e, drawing.id, 'horz_price');
+                    if (isSelected && !drawing.isLocked) {
+                      e.stopPropagation();
+                      preventDeselectRef.current = true;
+                      handleStartDrag(e, drawing.id, 'horz_price');
+                    } else {
+                      mouseDownCoordRef.current = { x: e.clientX, y: e.clientY, id: drawing.id };
+                      forwardMouseDownToChart(e);
+                    }
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    preventDeselectRef.current = true;
-                    setSelectedDrawingId(drawing.id);
+                    const start = mouseDownCoordRef.current;
+                    if (start && start.id === drawing.id) {
+                      const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+                      if (dist < 6) {
+                        setSelectedDrawingId(drawing.id);
+                      }
+                    } else {
+                      setSelectedDrawingId(drawing.id);
+                    }
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
-                    preventDeselectRef.current = true;
+                    setSelectedDrawingId(drawing.id);
                     setModalDrawing(drawing);
                     setIsSettingsModalOpen(true);
                   }}
-                  className="tv-drawing-element cursor-ns-resize pointer-events-auto"
+                  className={`tv-drawing-element pointer-events-auto ${
+                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-ns-resize') : 'cursor-pointer'
+                  }`}
                 />
                 {/* Visible Line */}
                 <line
@@ -1183,22 +1247,34 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                 {/* Level badge */}
                 <g
                   onMouseDown={(e) => {
-                    e.stopPropagation();
-                    preventDeselectRef.current = true;
-                    handleStartDrag(e, drawing.id, 'horz_price');
+                    if (isSelected && !drawing.isLocked) {
+                      e.stopPropagation();
+                      preventDeselectRef.current = true;
+                      handleStartDrag(e, drawing.id, 'horz_price');
+                    } else {
+                      mouseDownCoordRef.current = { x: e.clientX, y: e.clientY, id: drawing.id };
+                      forwardMouseDownToChart(e);
+                    }
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    preventDeselectRef.current = true;
-                    setSelectedDrawingId(drawing.id);
+                    const start = mouseDownCoordRef.current;
+                    if (start && start.id === drawing.id) {
+                      const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+                      if (dist < 6) {
+                        setSelectedDrawingId(drawing.id);
+                      }
+                    } else {
+                      setSelectedDrawingId(drawing.id);
+                    }
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
-                    preventDeselectRef.current = true;
+                    setSelectedDrawingId(drawing.id);
                     setModalDrawing(drawing);
                     setIsSettingsModalOpen(true);
                   }}
-                  className="tv-drawing-element tv-drawing-handle cursor-ns-resize pointer-events-auto"
+                  className="tv-drawing-element tv-drawing-handle cursor-pointer pointer-events-auto"
                   transform={`translate(60, ${p.y - 10})`}
                 >
                   <rect
@@ -1270,22 +1346,36 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   strokeWidth="16"
                   pointerEvents="all"
                   onMouseDown={(e) => {
-                    e.stopPropagation();
-                    preventDeselectRef.current = true;
-                    handleStartDrag(e, drawing.id, 'move');
+                    if (isSelected && !drawing.isLocked) {
+                      e.stopPropagation();
+                      preventDeselectRef.current = true;
+                      handleStartDrag(e, drawing.id, 'move');
+                    } else {
+                      mouseDownCoordRef.current = { x: e.clientX, y: e.clientY, id: drawing.id };
+                      forwardMouseDownToChart(e);
+                    }
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    preventDeselectRef.current = true;
-                    setSelectedDrawingId(drawing.id);
+                    const start = mouseDownCoordRef.current;
+                    if (start && start.id === drawing.id) {
+                      const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+                      if (dist < 6) {
+                        setSelectedDrawingId(drawing.id);
+                      }
+                    } else {
+                      setSelectedDrawingId(drawing.id);
+                    }
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
-                    preventDeselectRef.current = true;
+                    setSelectedDrawingId(drawing.id);
                     setModalDrawing(drawing);
                     setIsSettingsModalOpen(true);
                   }}
-                  className="tv-drawing-element cursor-move pointer-events-auto"
+                  className={`tv-drawing-element pointer-events-auto ${
+                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-move') : 'cursor-pointer'
+                  }`}
                 />
                 {/* Visible Line / Ray */}
                 <line
@@ -1299,39 +1389,43 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   className="pointer-events-none"
                 />
 
-                {/* Point 1 Handle (Начало) */}
-                <g
-                  onMouseDown={(e) => handleStartDrag(e, drawing.id, 'line_p1')}
-                  className="tv-drawing-handle cursor-pointer pointer-events-auto"
-                >
-                  <title>Начало {isRay ? 'луча' : 'линии'} (зажмите и тяните)</title>
-                  <circle cx={p1.x} cy={p1.y} r="14" fill="transparent" pointerEvents="all" />
-                  <circle
-                    cx={p1.x}
-                    cy={p1.y}
-                    r={isSelected ? '6' : '4.5'}
-                    fill="#ffffff"
-                    stroke={lineColor}
-                    strokeWidth="2.5"
-                  />
-                </g>
+                {/* Point 1 Handle (Начало) - visible only when selected */}
+                {isSelected && (
+                  <g
+                    onMouseDown={(e) => handleStartDrag(e, drawing.id, 'line_p1')}
+                    className="tv-drawing-handle cursor-pointer pointer-events-auto"
+                  >
+                    <title>Начало {isRay ? 'луча' : 'линии'} (зажмите и тяните)</title>
+                    <circle cx={p1.x} cy={p1.y} r="14" fill="transparent" pointerEvents="all" />
+                    <circle
+                      cx={p1.x}
+                      cy={p1.y}
+                      r="5"
+                      fill="#ffffff"
+                      stroke={lineColor}
+                      strokeWidth="2.5"
+                    />
+                  </g>
+                )}
 
-                {/* Point 2 Handle (Конец / Направление) */}
-                <g
-                  onMouseDown={(e) => handleStartDrag(e, drawing.id, 'line_p2')}
-                  className="tv-drawing-handle cursor-pointer pointer-events-auto"
-                >
-                  <title>{isRay ? 'Вторая точка / направление луча' : 'Конец линии'} (зажмите и тяните)</title>
-                  <circle cx={p2.x} cy={p2.y} r="14" fill="transparent" pointerEvents="all" />
-                  <circle
-                    cx={p2.x}
-                    cy={p2.y}
-                    r={isSelected ? '6' : '4.5'}
-                    fill="#ffffff"
-                    stroke={lineColor}
-                    strokeWidth="2.5"
-                  />
-                </g>
+                {/* Point 2 Handle (Конец / Направление) - visible only when selected */}
+                {isSelected && (
+                  <g
+                    onMouseDown={(e) => handleStartDrag(e, drawing.id, 'line_p2')}
+                    className="tv-drawing-handle cursor-pointer pointer-events-auto"
+                  >
+                    <title>{isRay ? 'Вторая точка / направление луча' : 'Конец линии'} (зажмите и тяните)</title>
+                    <circle cx={p2.x} cy={p2.y} r="14" fill="transparent" pointerEvents="all" />
+                    <circle
+                      cx={p2.x}
+                      cy={p2.y}
+                      r="5"
+                      fill="#ffffff"
+                      stroke={lineColor}
+                      strokeWidth="2.5"
+                    />
+                  </g>
+                )}
               </g>
             );
           }

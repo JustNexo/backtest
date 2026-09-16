@@ -87,6 +87,7 @@ export const SessionsLayer: React.FC<SessionsLayerProps> = ({
     const segments: Array<{
       sessionId: string;
       name: string;
+      label: string;
       color: string;
       bgOpacity: number;
       showHighLow: boolean;

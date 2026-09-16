@@ -62,7 +62,8 @@ export function calculateRiskPosition(
   stopLossPrice: number,
   takeProfitPrice?: number,
   lotPrecision: number = 3,
-  baseAsset: string = 'BTC'
+  baseAsset: string = 'BTC',
+  pipMultiplier?: { pipSize: number; pipValuePerLot: number }
 ): {
   riskUsd: number;
   stopDistance: number;
@@ -114,17 +115,22 @@ export function calculateRiskPosition(
     ? balance * (riskSettings.riskPercent / 100)
     : riskSettings.riskUsd;
 
-  // Formula: Size = Risk $ / Stop Distance
-  const rawSize = riskUsd / stopDistance;
+  // Formula with pip sizing (Forex / Gold / Crypto)
+  const pipSize = pipMultiplier?.pipSize || 1;
+  const pipValue = pipMultiplier?.pipValuePerLot || 1;
+  const stopInPips = stopDistance / pipSize;
+  const dollarLossPerLot = stopInPips * pipValue;
+  const rawSize = dollarLossPerLot > 0 ? riskUsd / dollarLossPerLot : riskUsd / stopDistance;
   const sizeAsset = Number(rawSize.toFixed(lotPrecision));
-  const notionalUsdt = Number((sizeAsset * entryPrice).toFixed(2));
+  const notionalUsdt = Number((sizeAsset * entryPrice * (pipMultiplier ? pipValue / pipSize : 1)).toFixed(2));
 
   let potentialProfitUsd = 0;
   let riskRewardRatio = 0;
 
   if (takeProfitPrice && takeProfitPrice > 0) {
     const tpDistance = Math.abs(takeProfitPrice - entryPrice);
-    potentialProfitUsd = Number((sizeAsset * tpDistance).toFixed(2));
+    const tpPips = tpDistance / pipSize;
+    potentialProfitUsd = Number((sizeAsset * tpPips * pipValue).toFixed(2));
     riskRewardRatio = Number((tpDistance / stopDistance).toFixed(2));
   }
 
@@ -141,6 +147,7 @@ export function calculateRiskPosition(
     isValid: sizeAsset > 0,
   };
 }
+
 
 /**
  * Calculates open/close commission fee based on Prop Firm settings
@@ -222,13 +229,17 @@ export function openPosition(
 export function evaluatePositionWithCandle(
   position: Position,
   candle: Candle,
-  feeSettings: PropFirmFeeSettings
+  feeSettings: PropFirmFeeSettings,
+  pipMultiplier?: { pipSize: number; pipValuePerLot: number }
 ): {
   isClosed: boolean;
   closedTrade?: ClosedTrade;
   updatedPosition?: Position;
 } {
   const { side, entryPrice, size, notionalValue, stopLoss, takeProfit } = position;
+  const pipFactor = pipMultiplier && pipMultiplier.pipSize > 0
+    ? pipMultiplier.pipValuePerLot / pipMultiplier.pipSize
+    : 1;
 
   // Calculate swaps accumulated up to candle.time
   const additionalSwap = calculateAccumulatedSwap(
@@ -297,13 +308,13 @@ export function evaluatePositionWithCandle(
 
   // If position triggered SL or TP
   if (hitSL || hitTP) {
-    const exitNotional = size * exitPrice;
+    const exitNotional = size * exitPrice * (pipFactor !== 1 ? pipFactor : 1);
     const feeClose = calculateCommission(exitNotional, size, feeSettings);
     const grossPnl = side === 'long'
-      ? (exitPrice - entryPrice) * size
-      : (entryPrice - exitPrice) * size;
+      ? (exitPrice - entryPrice) * size * pipFactor
+      : (entryPrice - exitPrice) * size * pipFactor;
     const netPnl = grossPnl - position.feeOpen - feeClose + totalSwap;
-    const returnPercent = (grossPnl / notionalValue) * 100;
+    const returnPercent = notionalValue > 0 ? (grossPnl / notionalValue) * 100 : 0;
 
     const closedTrade: ClosedTrade = {
       id: position.id,
@@ -334,8 +345,8 @@ export function evaluatePositionWithCandle(
   // Position remains open: update unrealized PnL
   const currentPrice = candle.close;
   const grossPnl = side === 'long'
-    ? (currentPrice - entryPrice) * size
-    : (entryPrice - currentPrice) * size;
+    ? (currentPrice - entryPrice) * size * pipFactor
+    : (entryPrice - currentPrice) * size * pipFactor;
   const estimatedExitFee = calculateCommission(size * currentPrice, size, feeSettings);
   const netPnl = grossPnl - position.feeOpen - estimatedExitFee + totalSwap;
 
@@ -361,16 +372,20 @@ export function closePositionManually(
   position: Position,
   exitPrice: number,
   exitTime: number,
-  feeSettings: PropFirmFeeSettings
+  feeSettings: PropFirmFeeSettings,
+  pipMultiplier?: { pipSize: number; pipValuePerLot: number }
 ): ClosedTrade {
   const { side, entryPrice, size, notionalValue, stopLoss, takeProfit } = position;
-  const exitNotional = size * exitPrice;
+  const pipFactor = pipMultiplier && pipMultiplier.pipSize > 0
+    ? pipMultiplier.pipValuePerLot / pipMultiplier.pipSize
+    : 1;
+  const exitNotional = size * exitPrice * (pipFactor !== 1 ? pipFactor : 1);
   const feeClose = calculateCommission(exitNotional, size, feeSettings);
   const grossPnl = side === 'long'
-    ? (exitPrice - entryPrice) * size
-    : (entryPrice - exitPrice) * size;
+    ? (exitPrice - entryPrice) * size * pipFactor
+    : (entryPrice - exitPrice) * size * pipFactor;
   const netPnl = grossPnl - position.feeOpen - feeClose + position.accumulatedSwap;
-  const returnPercent = (grossPnl / notionalValue) * 100;
+  const returnPercent = notionalValue > 0 ? (grossPnl / notionalValue) * 100 : 0;
 
   return {
     id: position.id,

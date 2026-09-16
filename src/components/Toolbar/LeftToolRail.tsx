@@ -23,7 +23,7 @@ const RayIcon: React.FC<{ className?: string }> = ({ className }) => (
     strokeLinejoin="round"
     className={className}
   >
-    <circle cx="5" cy="19" r="2.5" fill="currentColor" />
+    <circle cx="5" cy="19" r="2" fill="currentColor" />
     <line x1="7" y1="17" x2="20" y2="4" />
     <polyline points="14 4 20 4 20 10" />
   </svg>
@@ -53,58 +53,60 @@ export const LeftToolRail: React.FC = () => {
       return;
     }
 
-    // Toggle tool or activate tool
     setActiveTool(activeTool === toolId ? 'cursor' : toolId);
   };
 
   const tools: Array<{ id: DrawingTool; label: string; icon: React.ReactNode }> = [
-    { id: 'cursor', label: 'Перекрестие (Crosshair)', icon: <MousePointer2 className="w-4 h-4" /> },
-    { id: 'trendline', label: 'Трендовая линия (Отрезок: начало и конец)', icon: <TrendingUp className="w-4 h-4" /> },
-    { id: 'ray', label: 'Луч (Начало и направление / бесконечный луч)', icon: <RayIcon className="w-4 h-4" /> },
-    { id: 'horizontal', label: 'Горизонтальный уровень', icon: <Minus className="w-4 h-4" /> },
-    { id: 'rectangle', label: 'Прямоугольник (Зона ликвидности / Order Block)', icon: <Square className="w-4 h-4" /> },
-    { id: 'position_long', label: 'Длинная позиция (Long R:R)', icon: <ArrowUpRight className="w-4 h-4 text-tv-green" /> },
-    { id: 'position_short', label: 'Короткая позиция (Short R:R)', icon: <ArrowDownRight className="w-4 h-4 text-tv-red" /> },
-    { id: 'measure', label: 'Линейка / Измерение', icon: <Ruler className="w-4 h-4" /> },
+    { id: 'cursor', label: 'Перекрестие (Crosshair)', icon: <MousePointer2 className="w-3.5 h-3.5" /> },
+    { id: 'trendline', label: 'Трендовая линия (Отрезок)', icon: <TrendingUp className="w-3.5 h-3.5" /> },
+    { id: 'ray', label: 'Луч (Ray)', icon: <RayIcon className="w-3.5 h-3.5" /> },
+    { id: 'horizontal', label: 'Горизонтальный уровень', icon: <Minus className="w-3.5 h-3.5" /> },
+    { id: 'rectangle', label: 'Прямоугольник (Зона ликвидности)', icon: <Square className="w-3.5 h-3.5" /> },
+    { id: 'position_long', label: 'Long R:R позиция', icon: <ArrowUpRight className="w-3.5 h-3.5 text-[#089981]" /> },
+    { id: 'position_short', label: 'Short R:R позиция', icon: <ArrowDownRight className="w-3.5 h-3.5 text-[#f23645]" /> },
+    { id: 'measure', label: 'Линейка / Измерение', icon: <Ruler className="w-3.5 h-3.5" /> },
   ];
 
   return (
-    <aside className="w-11 bg-[#131722] border-r border-[#2a2e39] flex flex-col items-center py-2 shrink-0 select-none z-10 justify-between">
+    <aside className="w-10 bg-[#131722] border-r border-[#242731] flex flex-col items-center py-2 shrink-0 select-none z-10 justify-between font-sans">
       <div className="flex flex-col items-center gap-1">
-        {tools.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => handleToolClick(t.id)}
-            title={t.label}
-            className={`p-2 rounded-lg transition-colors ${
-              activeTool === t.id
-                ? 'bg-tv-blue text-white shadow-sm'
-                : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
-            }`}
-          >
-            {t.icon}
-          </button>
-        ))}
+        {tools.map((t) => {
+          const isActive = activeTool === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => handleToolClick(t.id)}
+              title={t.label}
+              className={`w-7 h-7 flex items-center justify-center rounded transition-colors cursor-pointer ${
+                isActive
+                  ? 'bg-[#2962ff] text-white shadow-sm'
+                  : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
+              }`}
+            >
+              {t.icon}
+            </button>
+          );
+        })}
 
-        <div className="w-6 h-[1px] bg-[#2a2e39] my-1" />
+        <div className="w-5 h-[1px] bg-[#242731] my-1" />
 
-        {/* Magnet Tool Button */}
+        {/* Magnet Tool */}
         <button
           onClick={toggleMagnetMode}
           title={
             magnetMode
-              ? 'Магнит: ВКЛ (привязка к High/Low/Open/Close свечей). Нажмите для выключения [или удерживайте Ctrl]'
-              : 'Магнит: ВЫКЛ. Нажмите для включения привязки линий к свечам [или удерживайте Ctrl]'
+              ? 'Магнит: ВКЛ (привязка к свечам). [Удерживайте Ctrl]'
+              : 'Магнит: ВЫКЛ. [Удерживайте Ctrl]'
           }
-          className={`p-2 rounded-lg transition-all relative ${
+          className={`w-7 h-7 flex items-center justify-center rounded transition-colors relative cursor-pointer ${
             magnetMode
-              ? 'bg-[#2962ff] text-white shadow-md shadow-[#2962ff]/30 ring-1 ring-white/30'
-              : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+              ? 'bg-[#242731] text-[#2962ff]'
+              : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
           }`}
         >
-          <Magnet className="w-4 h-4" />
+          <Magnet className="w-3.5 h-3.5" />
           {magnetMode && (
-            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#089981] ring-2 ring-[#131722]" />
+            <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[#2962ff]" />
           )}
         </button>
       </div>
@@ -114,9 +116,9 @@ export const LeftToolRail: React.FC = () => {
         <button
           onClick={clearDrawings}
           title="Удалить все объекты разметки"
-          className="p-2 rounded-lg text-tv-textMuted hover:text-tv-red hover:bg-tv-red/10 transition-colors"
+          className="w-7 h-7 flex items-center justify-center rounded text-[#787b86] hover:text-[#f23645] hover:bg-[#f23645]/10 transition-colors cursor-pointer"
         >
-          <Trash2 className="w-4 h-4" />
+          <Trash2 className="w-3.5 h-3.5" />
         </button>
       )}
     </aside>

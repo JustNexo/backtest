@@ -29,6 +29,8 @@ import {
   PropFirmRuleSettings,
   DEFAULT_PROP_FIRM_PRESETS,
 } from '../types/session';
+import { NewsFilterSettings } from '../types/news';
+
 import {
   fetchHistoricalDateRange,
   fetchLatestCandles,
@@ -98,7 +100,7 @@ interface ChartContextType {
   togglePlay: () => void;
   setPlaybackSpeed: (speedMs: number) => void;
   exitReplay: () => void;
-  jumpToTimestamp: (timestampSeconds: number) => Promise<void>;
+  jumpToTimestamp: (timestampSeconds: number, targetSymbol?: SupportedSymbol) => Promise<void>;
   scrubToIndex: (index: number) => void;
 
   // Settings
@@ -145,6 +147,11 @@ interface ChartContextType {
   updateDrawing: (id: string, updated: Partial<DrawingObject>) => void;
   removeDrawing: (id: string) => void;
   clearDrawings: () => void;
+  undoDrawing: () => void;
+  redoDrawing: () => void;
+  canUndoDrawing: boolean;
+  canRedoDrawing: boolean;
+  pushDrawingHistory: (snapshot?: DrawingObject[]) => void;
   registerViewportCenterGetter: (getter: () => { time: number; price: number } | null) => void;
   getViewportCenter: () => { time: number; price: number } | null;
   magnetMode: boolean;
@@ -204,10 +211,20 @@ interface ChartContextType {
   currentView: 'chart' | 'cabinet';
   setCurrentView: (view: 'chart' | 'cabinet') => void;
 
+  // Economic News Calendar
+  newsFilter: NewsFilterSettings;
+  updateNewsFilter: (filter: Partial<NewsFilterSettings>) => void;
+  toggleNews: () => void;
+
   // Cabinet Modal Visibility (backward compatible)
   isCabinetOpen: boolean;
   setIsCabinetOpen: (open: boolean) => void;
+
+  // Viewport Focus Trigger (for explicit jumps only, without snapping on replay steps)
+  viewportFocusTrigger: number;
+  triggerViewportFocus: () => void;
 }
+
 
 const ChartContext = createContext<ChartContextType | null>(null);
 
@@ -244,6 +261,12 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const activeSession = useMemo(() => {
     return sessions.find((s) => s.id === activeSessionId) || null;
   }, [sessions, activeSessionId]);
+
+  // Viewport Focus Trigger for explicit jumps only (not on step/play)
+  const [viewportFocusTrigger, setViewportFocusTrigger] = useState<number>(0);
+  const triggerViewportFocus = useCallback(() => {
+    setViewportFocusTrigger((c) => c + 1);
+  }, []);
 
   // Replay State
   const [replay, setReplay] = useState<ReplayState>({
@@ -321,7 +344,21 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     saveStoredTimezone(tz);
   }, []);
 
+  // Economic News Filter
+  const [newsFilter, setNewsFilter] = useState<NewsFilterSettings>(() => ({
+    enabled: true,
+    minImportance: 'high',
+    showCurrencies: [],
+  }));
+  const updateNewsFilter = useCallback((filter: Partial<NewsFilterSettings>) => {
+    setNewsFilter((prev) => ({ ...prev, ...filter }));
+  }, []);
+  const toggleNews = useCallback(() => {
+    setNewsFilter((prev) => ({ ...prev, enabled: !prev.enabled }));
+  }, []);
+
   // Pre-trade Order Setup
+
   const [orderSetup, setOrderSetup] = useState<OrderSetupPreview>({
     enabled: false,
     side: 'long',
@@ -337,22 +374,28 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Timer ref for playback
   const playIntervalRef = useRef<number | null>(null);
+  const isSwitchingSessionRef = useRef<boolean>(false);
 
   // Load candles when symbol or timeframe changes
   useEffect(() => {
+    if (isSwitchingSessionRef.current) return;
+
     let isMounted = true;
     setIsLoading(true);
 
-    const targetTs = replay.isActive && replay.currentCutTime ? replay.currentCutTime : null;
+    const activeTargetTime = (replay.isActive && replay.currentCutTime)
+      ? replay.currentCutTime
+      : (activeSession?.currentReplayTime || activeSession?.startDate || null);
 
-    getCandlesForTimeframe(symbol, timeframe, { targetTimestamp: targetTs })
+    getCandlesForTimeframe(symbol, timeframe, { targetTimestamp: activeTargetTime })
       .then((data) => {
         if (!isMounted) return;
         setAllCandles(data);
         setIsLoading(false);
 
         setReplay((prev) => {
-          if (!prev.isActive || prev.currentCutTime === null) {
+          const cutTime = (prev.isActive && prev.currentCutTime) ? prev.currentCutTime : activeTargetTime;
+          if (!cutTime) {
             return {
               ...prev,
               currentIndex: data.length - 1,
@@ -361,7 +404,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           let idx = -1;
           for (let i = 0; i < data.length; i++) {
-            if (data[i].time <= prev.currentCutTime!) {
+            if (data[i].time <= cutTime) {
               idx = i;
             } else {
               break;
@@ -372,6 +415,8 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           return {
             ...prev,
+            isActive: Boolean(activeSession || prev.isActive),
+            currentCutTime: data[idx]?.time || cutTime,
             currentIndex: idx,
           };
         });
@@ -384,7 +429,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => {
       isMounted = false;
     };
-  }, [symbol, timeframe]);
+  }, [symbol, timeframe, activeSession?.id]);
 
   // Sliced visible candles
   const visibleCandles = useMemo(() => {
@@ -569,6 +614,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updatedAt: Date.now(),
       };
 
+      isSwitchingSessionRef.current = true;
       const updated = [newSession, ...sessions.filter((s) => s.id !== newSession.id)];
       setSessions(updated);
       saveStoredSessions(updated);
@@ -588,7 +634,13 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       // Jump to start date on chart and switch to chart view
       setCurrentView('chart');
-      await jumpToTimestamp(params.startDate);
+      try {
+        await jumpToTimestamp(params.startDate, params.symbol);
+      } finally {
+        setTimeout(() => {
+          isSwitchingSessionRef.current = false;
+        }, 300);
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sessions, timeframe]
@@ -599,6 +651,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const sess = sessions.find((s) => s.id === sessionId);
       if (!sess) return;
 
+      isSwitchingSessionRef.current = true;
       setActiveSessionId(sess.id);
       saveStoredActiveSessionId(sess.id);
 
@@ -615,7 +668,13 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const targetTime = sess.currentReplayTime || sess.startDate;
       setCurrentView('chart');
-      await jumpToTimestamp(targetTime);
+      try {
+        await jumpToTimestamp(targetTime, sess.symbol);
+      } finally {
+        setTimeout(() => {
+          isSwitchingSessionRef.current = false;
+        }, 300);
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sessions]
@@ -628,11 +687,11 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const resetObj: BacktestSession = {
         ...sess,
+        currentReplayTime: sess.startDate,
         currentBalance: sess.initialBalance,
         peakBalance: sess.initialBalance,
         dayStartBalance: sess.initialBalance,
         dayStartTime: sess.startDate,
-        currentReplayTime: sess.startDate,
         propFirmStatus: 'in_progress',
         breachReason: null,
         breachTime: null,
@@ -654,7 +713,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setLimitOrders([]);
         setDayStartBalance(sess.initialBalance);
         setDayStartTime(sess.startDate);
-        await jumpToTimestamp(sess.startDate);
+        await jumpToTimestamp(sess.startDate, sess.symbol);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -761,8 +820,9 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isPlaying: false,
         playbackSpeed: 500,
       });
+      triggerViewportFocus();
     },
-    [allCandles]
+    [allCandles, triggerViewportFocus]
   );
 
   const stepForward = useCallback(() => {
@@ -842,10 +902,11 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 
   const jumpToTimestamp = useCallback(
-    async (timestampSeconds: number) => {
+    async (timestampSeconds: number, targetSymbol?: SupportedSymbol) => {
       setIsLoading(true);
+      const activeSym = targetSymbol || symbol;
       try {
-        const fetched = await fetchHistoricalDateRange(symbol, timeframe, timestampSeconds);
+        const fetched = await fetchHistoricalDateRange(activeSym, timeframe, timestampSeconds);
         setAllCandles(fetched);
         let idx = -1;
         for (let i = 0; i < fetched.length; i++) {
@@ -865,13 +926,14 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           isPlaying: false,
           playbackSpeed: 500,
         });
+        triggerViewportFocus();
       } catch (err) {
         console.error('Jump to timestamp failed:', err);
       } finally {
         setIsLoading(false);
       }
     },
-    [symbol, timeframe]
+    [symbol, timeframe, triggerViewportFocus]
   );
 
   // Playback timer effect
@@ -1220,10 +1282,89 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   }, []);
 
-  // Drawing Tools
-  const addDrawing = useCallback((drawing: DrawingObject) => {
-    setDrawings((prev) => [...prev, drawing]);
+  // Drawing Tools History & Undo/Redo
+  const drawingsRef = useRef<DrawingObject[]>(drawings);
+  drawingsRef.current = drawings;
+
+  const undoStackRef = useRef<DrawingObject[][]>([]);
+  const redoStackRef = useRef<DrawingObject[][]>([]);
+  const [canUndoDrawing, setCanUndoDrawing] = useState<boolean>(false);
+  const [canRedoDrawing, setCanRedoDrawing] = useState<boolean>(false);
+
+  const updateUndoRedoAvailability = useCallback(() => {
+    setCanUndoDrawing(undoStackRef.current.length > 0);
+    setCanRedoDrawing(redoStackRef.current.length > 0);
   }, []);
+
+  const pushDrawingHistory = useCallback((snapshot?: DrawingObject[]) => {
+    const stateToPush = snapshot
+      ? JSON.parse(JSON.stringify(snapshot))
+      : JSON.parse(JSON.stringify(drawingsRef.current));
+    undoStackRef.current.push(stateToPush);
+    if (undoStackRef.current.length > 50) {
+      undoStackRef.current.shift();
+    }
+    redoStackRef.current = [];
+    updateUndoRedoAvailability();
+  }, [updateUndoRedoAvailability]);
+
+  const undoDrawing = useCallback(() => {
+    if (undoStackRef.current.length === 0) return;
+    const previous = undoStackRef.current.pop()!;
+    redoStackRef.current.push(JSON.parse(JSON.stringify(drawingsRef.current)));
+    setDrawings(previous);
+    setSelectedDrawingId(null);
+    updateUndoRedoAvailability();
+  }, [updateUndoRedoAvailability]);
+
+  const redoDrawing = useCallback(() => {
+    if (redoStackRef.current.length === 0) return;
+    const next = redoStackRef.current.pop()!;
+    undoStackRef.current.push(JSON.parse(JSON.stringify(drawingsRef.current)));
+    setDrawings(next);
+    setSelectedDrawingId(null);
+    updateUndoRedoAvailability();
+  }, [updateUndoRedoAvailability]);
+
+  // Global Ctrl+Z / Cmd+Z / Ctrl+Y / Ctrl+Shift+Z listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isInput =
+        activeEl instanceof HTMLInputElement ||
+        activeEl instanceof HTMLTextAreaElement ||
+        activeEl?.getAttribute('contenteditable') === 'true';
+      if (isInput) return;
+
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+      if (!isCtrlOrCmd) return;
+
+      if (e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          redoDrawing();
+        } else {
+          undoDrawing();
+        }
+      } else if (e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        redoDrawing();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undoDrawing, redoDrawing]);
+
+  // Deselect active drawing when switching timeframe
+  useEffect(() => {
+    setSelectedDrawingId(null);
+  }, [timeframe]);
+
+  const addDrawing = useCallback((drawing: DrawingObject) => {
+    pushDrawingHistory();
+    setDrawings((prev) => [...prev, drawing]);
+  }, [pushDrawingHistory]);
 
   const updateDrawing = useCallback((id: string, updated: Partial<DrawingObject>) => {
     setDrawings((prev) =>
@@ -1232,13 +1373,17 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const removeDrawing = useCallback((id: string) => {
+    pushDrawingHistory();
     setDrawings((prev) => prev.filter((d) => d.id !== id));
-  }, []);
+    setSelectedDrawingId((cur) => (cur === id ? null : cur));
+  }, [pushDrawingHistory]);
 
   const clearDrawings = useCallback(() => {
+    if (drawingsRef.current.length === 0) return;
+    pushDrawingHistory();
     setDrawings([]);
     setSelectedDrawingId(null);
-  }, []);
+  }, [pushDrawingHistory]);
 
   const viewportCenterGetterRef = useRef<(() => { time: number; price: number } | null) | null>(null);
   const registerViewportCenterGetter = useCallback((getter: () => { time: number; price: number } | null) => {
@@ -1322,6 +1467,11 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     updateDrawing,
     removeDrawing,
     clearDrawings,
+    undoDrawing,
+    redoDrawing,
+    canUndoDrawing,
+    canRedoDrawing,
+    pushDrawingHistory,
     magnetMode,
     setMagnetMode,
     toggleMagnetMode,
@@ -1357,9 +1507,15 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     propFirmEvaluation,
     currentView,
     setCurrentView,
+    newsFilter,
+    updateNewsFilter,
+    toggleNews,
     isCabinetOpen,
     setIsCabinetOpen,
+    viewportFocusTrigger,
+    triggerViewportFocus,
   };
+
 
   return <ChartContext.Provider value={value}>{children}</ChartContext.Provider>;
 };

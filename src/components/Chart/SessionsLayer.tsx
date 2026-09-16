@@ -109,9 +109,19 @@ export const SessionsLayer: React.FC<SessionsLayerProps> = ({
       dayList.push(c);
     }
 
+    // Filter to last N days if maxDays is set
+    let allowedDays = Array.from(candlesByDay.keys()).sort((a, b) => a - b);
+    const maxDays = sessionsSettings.maxDays ?? 3;
+    if (maxDays > 0 && allowedDays.length > maxDays) {
+      allowedDays = allowedDays.slice(-maxDays);
+    }
+    const allowedDaysSet = new Set(allowedDays);
+
     const activeSessions = Object.values(sessionsSettings.sessions).filter((s) => s.enabled);
 
     candlesByDay.forEach((dayCandles, dayStart) => {
+      if (!allowedDaysSet.has(dayStart)) return;
+
       for (const sess of activeSessions) {
         const startSec = dayStart + sess.startHour * 3600 + sess.startMinute * 60;
         let endSec = dayStart + sess.endHour * 3600 + sess.endMinute * 60;
@@ -131,8 +141,9 @@ export const SessionsLayer: React.FC<SessionsLayerProps> = ({
           segments.push({
             sessionId: sess.id,
             name: sess.name,
+            label: sess.label || (sess.id === 'asia' ? 'Tokyo' : sess.id === 'london' ? 'London' : sess.id === 'lunch' ? 'Lunch' : sess.id === 'newyork' ? 'NY' : sess.name.split(' ')[0]),
             color: sess.color,
-            bgOpacity: sess.bgOpacity,
+            bgOpacity: sess.bgOpacity || 0.08,
             showHighLow: sess.showHighLow && sessionsSettings.showHighLow,
             showLabel: sess.showLabel && sessionsSettings.showLabels,
             startCandle: inSession[0],
@@ -154,6 +165,10 @@ export const SessionsLayer: React.FC<SessionsLayerProps> = ({
   const container = containerRef.current;
   const containerWidth = container?.clientWidth || 800;
   const containerHeight = container?.clientHeight || 600;
+  const isBoxStyle = (sessionsSettings.renderStyle || 'box') === 'box';
+  const showMidline = !!sessionsSettings.showMidline;
+  const extendLines = !!sessionsSettings.extendHighLow;
+  const isDetailed = sessionsSettings.highLowStyle === 'detailed';
 
   return (
     <svg
@@ -169,122 +184,216 @@ export const SessionsLayer: React.FC<SessionsLayerProps> = ({
         const x1 = startX !== null ? startX : -100;
         const x2 = endX !== null ? endX : containerWidth + 100;
 
-        const left = Math.min(x1, x2) - 4;
-        const width = Math.max(12, Math.abs(x2 - x1) + 8);
+        const left = Math.min(x1, x2) - 3;
+        const width = Math.max(8, Math.abs(x2 - x1) + 6);
 
         const highY = candleSeries.priceToCoordinate(seg.high);
         const lowY = candleSeries.priceToCoordinate(seg.low);
 
+        if (highY === null || lowY === null) return null;
+
+        const boxTop = Math.min(highY, lowY);
+        const boxBottom = Math.max(highY, lowY);
+        const boxHeight = Math.max(4, boxBottom - boxTop);
+        const midY = (boxTop + boxBottom) / 2;
+
         return (
           <g key={`${seg.sessionId}_${idx}`}>
-            {/* Background vertical tint */}
-            <rect
-              x={left}
-              y={0}
-              width={width}
-              height={containerHeight}
-              fill={seg.color}
-              fillOpacity={seg.bgOpacity}
-            />
-
-            {/* Session Left and Right Border lines */}
-            <line
-              x1={left}
-              y1={0}
-              x2={left}
-              y2={containerHeight}
-              stroke={seg.color}
-              strokeWidth={1}
-              strokeOpacity={0.4}
-              strokeDasharray="2 4"
-            />
-            <line
-              x1={left + width}
-              y1={0}
-              x2={left + width}
-              y2={containerHeight}
-              stroke={seg.color}
-              strokeWidth={1}
-              strokeOpacity={0.4}
-              strokeDasharray="2 4"
-            />
-
-            {/* High / Low boundary levels */}
-            {seg.showHighLow && highY !== null && (
+            {isBoxStyle ? (
+              /* CLEAN RANGE BOX: Wraps only session candles High to Low */
               <g>
-                <line
-                  x1={left}
-                  y1={highY}
-                  x2={left + width}
-                  y2={highY}
-                  stroke={seg.color}
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                />
-                <text
-                  x={left + 6}
-                  y={highY - 4}
-                  fill={seg.color}
-                  fontSize="9"
-                  fontFamily="monospace"
-                  fontWeight="bold"
-                  className="select-none opacity-90"
-                >
-                  {seg.name.split(' ')[0]} H: ${formatPrice(seg.high, symbolInfo.precision)}
-                </text>
-              </g>
-            )}
-
-            {seg.showHighLow && lowY !== null && (
-              <g>
-                <line
-                  x1={left}
-                  y1={lowY}
-                  x2={left + width}
-                  y2={lowY}
-                  stroke={seg.color}
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                />
-                <text
-                  x={left + 6}
-                  y={lowY + 11}
-                  fill={seg.color}
-                  fontSize="9"
-                  fontFamily="monospace"
-                  fontWeight="bold"
-                  className="select-none opacity-90"
-                >
-                  {seg.name.split(' ')[0]} L: ${formatPrice(seg.low, symbolInfo.precision)}
-                </text>
-              </g>
-            )}
-
-            {/* Top Session Title Label */}
-            {seg.showLabel && (
-              <g transform={`translate(${left + 6}, 22)`}>
                 <rect
-                  x={0}
-                  y={0}
-                  width={seg.name.length * 6.5 + 12}
-                  height={16}
-                  rx={4}
-                  fill="#131722"
-                  fillOpacity={0.85}
+                  x={left}
+                  y={boxTop}
+                  width={width}
+                  height={boxHeight}
+                  rx={0}
+                  fill={seg.color}
+                  fillOpacity={seg.bgOpacity}
                   stroke={seg.color}
                   strokeWidth={1}
+                  strokeDasharray="4 3"
+                  strokeOpacity={0.85}
                 />
-                <text
-                  x={6}
-                  y={11}
+
+                {/* Optional 50% Equilibrium (EQ) midline */}
+                {showMidline && (
+                  <line
+                    x1={left}
+                    y1={midY}
+                    x2={left + width}
+                    y2={midY}
+                    stroke={seg.color}
+                    strokeWidth={1}
+                    strokeDasharray="2 3"
+                    strokeOpacity={0.4}
+                  />
+                )}
+
+                {/* Optional Extended High/Low lines into future */}
+                {extendLines && (
+                  <>
+                    <line
+                      x1={left + width}
+                      y1={boxTop}
+                      x2={containerWidth}
+                      y2={boxTop}
+                      stroke={seg.color}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.3}
+                    />
+                    <line
+                      x1={left + width}
+                      y1={boxBottom}
+                      x2={containerWidth}
+                      y2={boxBottom}
+                      stroke={seg.color}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.3}
+                    />
+                  </>
+                )}
+
+                {/* Clean Session Name placed OUTSIDE ABOVE the Box (TradingView style) */}
+                {seg.showLabel && (
+                  <text
+                    x={left + 4}
+                    y={boxTop - 4}
+                    fill={seg.color}
+                    fontSize="10"
+                    fontFamily="sans-serif"
+                    fontWeight="600"
+                    className="select-none tracking-wide"
+                  >
+                    {seg.label}
+                  </text>
+                )}
+
+                {/* Detailed High/Low Price Tag if requested */}
+                {seg.showHighLow && isDetailed && (
+                  <>
+                    <text
+                      x={left + width - 4}
+                      y={boxTop - 3}
+                      textAnchor="end"
+                      fill={seg.color}
+                      fontSize="9"
+                      fontFamily="monospace"
+                      fontWeight="500"
+                      className="select-none opacity-80"
+                    >
+                      H: {formatPrice(seg.high, symbolInfo.pricePrecision)}
+                    </text>
+                    <text
+                      x={left + width - 4}
+                      y={boxBottom + 10}
+                      textAnchor="end"
+                      fill={seg.color}
+                      fontSize="9"
+                      fontFamily="monospace"
+                      fontWeight="500"
+                      className="select-none opacity-80"
+                    >
+                      L: {formatPrice(seg.low, symbolInfo.pricePrecision)}
+                    </text>
+                  </>
+                )}
+              </g>
+            ) : (
+              /* VERTICAL COLUMN MODE */
+              <g>
+                <rect
+                  x={left}
+                  y={0}
+                  width={width}
+                  height={containerHeight}
                   fill={seg.color}
-                  fontSize="9"
-                  fontFamily="sans-serif"
-                  fontWeight="600"
-                  className="select-none"
-                >
-                  {seg.name}
-                </text>
+                  fillOpacity={seg.bgOpacity}
+                />
+                <line
+                  x1={left}
+                  y1={0}
+                  x2={left}
+                  y2={containerHeight}
+                  stroke={seg.color}
+                  strokeWidth={1}
+                  strokeOpacity={0.35}
+                  strokeDasharray="2 4"
+                />
+                <line
+                  x1={left + width}
+                  y1={0}
+                  x2={left + width}
+                  y2={containerHeight}
+                  stroke={seg.color}
+                  strokeWidth={1}
+                  strokeOpacity={0.35}
+                  strokeDasharray="2 4"
+                />
+
+                {seg.showHighLow && (
+                  <>
+                    <line
+                      x1={left}
+                      y1={boxTop}
+                      x2={left + width}
+                      y2={boxTop}
+                      stroke={seg.color}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                    />
+                    <line
+                      x1={left}
+                      y1={boxBottom}
+                      x2={left + width}
+                      y2={boxBottom}
+                      stroke={seg.color}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                    />
+                    {isDetailed && (
+                      <text
+                        x={left + 4}
+                        y={boxTop - 3}
+                        fill={seg.color}
+                        fontSize="9"
+                        fontFamily="monospace"
+                        className="select-none opacity-80"
+                      >
+                        {seg.name.split(' ')[0]} H: {formatPrice(seg.high, symbolInfo.pricePrecision)}
+                      </text>
+                    )}
+                  </>
+                )}
+
+                {seg.showLabel && (
+                  <g transform={`translate(${left + 4}, 20)`}>
+                    <rect
+                      x={0}
+                      y={0}
+                      width={seg.name.split(' ')[0].length * 6 + 10}
+                      height={14}
+                      rx={3}
+                      fill="#131722"
+                      fillOpacity={0.8}
+                      stroke={seg.color}
+                      strokeWidth={1}
+                    />
+                    <text
+                      x={5}
+                      y={10}
+                      fill={seg.color}
+                      fontSize="9"
+                      fontFamily="sans-serif"
+                      fontWeight="600"
+                      className="select-none"
+                    >
+                      {seg.name.split(' ')[0]}
+                    </text>
+                  </g>
+                )}
               </g>
             )}
           </g>

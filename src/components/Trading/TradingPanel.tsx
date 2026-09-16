@@ -9,18 +9,9 @@ import {
   BarChart3,
   RotateCcw,
   Download,
-  AlertCircle,
-  Percent,
-  DollarSign,
-  Shield,
-  Layers,
   Clock,
-  X,
-  Crosshair,
-  Sparkles,
-  Eye,
-  EyeOff,
   Code2,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useChart } from '../../context/ChartContext';
 import { calculateRiskPosition } from '../../services/tradeEngine';
@@ -46,7 +37,6 @@ export const TradingPanel: React.FC = () => {
     cancelLimitOrder,
     closeActivePosition,
     resetBacktest,
-    feeSettings,
     timezone,
     orderSetup,
     updateOrderSetup,
@@ -59,9 +49,8 @@ export const TradingPanel: React.FC = () => {
     return Math.round(p * factor) / factor;
   };
 
-  const currentPrice = currentCandle?.close || orderSetup.entryPrice || 65000;
+  const currentPrice = currentCandle?.close || orderSetup.entryPrice || symbolInfo.defaultPrice;
 
-  // Effective Entry Price: if limit, orderSetup.entryPrice; else current market price
   const effectiveEntryPrice = orderSetup.orderType === 'limit'
     ? orderSetup.entryPrice
     : currentPrice;
@@ -75,9 +64,17 @@ export const TradingPanel: React.FC = () => {
       orderSetup.stopLoss,
       orderSetup.takeProfit,
       symbolInfo.lotPrecision,
-      symbolInfo.baseAsset
+      symbolInfo.baseAsset,
+      { pipSize: symbolInfo.pipSize, pipValuePerLot: symbolInfo.pipValuePerLot }
     );
-  }, [balance, riskSettings, effectiveEntryPrice, orderSetup.stopLoss, orderSetup.takeProfit, symbolInfo.lotPrecision, symbolInfo.baseAsset]);
+  }, [
+    balance,
+    riskSettings,
+    effectiveEntryPrice,
+    orderSetup.stopLoss,
+    orderSetup.takeProfit,
+    symbolInfo,
+  ]);
 
   const handleSetSide = (side: 'long' | 'short') => {
     if (side === orderSetup.side) return;
@@ -118,7 +115,7 @@ export const TradingPanel: React.FC = () => {
 
   const handleExportCsv = () => {
     if (closedTrades.length === 0) return;
-    const headers = ['ID', 'Side', 'Entry Time', 'Exit Time', 'Entry Price', 'Exit Price', `Size (${symbolInfo.baseAsset})`, 'Gross PnL', 'Fees', 'Swap', 'Net PnL', 'Return %', 'Reason'];
+    const headers = ['ID', 'Side', 'Entry Time', 'Exit Time', 'Entry Price', 'Exit Price', `Size`, 'Gross PnL', 'Net PnL', 'Return %', 'Reason'];
     const rows = closedTrades.map(t => [
       t.id,
       t.side.toUpperCase(),
@@ -128,8 +125,6 @@ export const TradingPanel: React.FC = () => {
       t.exitPrice,
       t.size,
       t.grossPnl,
-      (t.feeOpen + t.feeClose).toFixed(2),
-      t.swapFee,
       t.netPnl,
       t.returnPercent,
       t.closeReason,
@@ -138,80 +133,73 @@ export const TradingPanel: React.FC = () => {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `backtest_trades_${Date.now()}.csv`);
+    link.setAttribute('download', `trades_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   const netPnlTotal = balance - initialBalance;
-  const netPnlTotalPercent = (netPnlTotal / initialBalance) * 100;
+  const netPnlTotalPercent = initialBalance > 0 ? (netPnlTotal / initialBalance) * 100 : 0;
 
   return (
-    <div className="border-t border-[#2a2e39] bg-[#1e222d] select-none flex flex-col shrink-0 transition-all duration-200">
-      {/* Panel Top Header Bar */}
-      <div className="h-10 px-4 flex items-center justify-between border-b border-[#2a2e39] bg-[#131722]/70">
-        <div className="flex items-center gap-4">
+    <div className="border-t border-[#242731] bg-[#161922] select-none flex flex-col shrink-0 font-sans">
+      {/* Bottom Bar: Clean Tab Navigation & Account Summary */}
+      <div className="h-10 px-3 flex items-center justify-between border-b border-[#242731] bg-[#131722]">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="flex items-center gap-1 text-xs font-semibold text-white hover:text-tv-blue transition-colors"
+            className="p-1 text-[#787b86] hover:text-white rounded transition-colors cursor-pointer"
+            title={isExpanded ? 'Свернуть панель' : 'Развернуть панель'}
           >
             {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-            <span>ТЕСТЕР СТРАТЕГИЙ & ТОРГОВЛЯ</span>
           </button>
 
-          {/* Tab buttons */}
           <div className="flex items-center gap-1">
             <button
               onClick={() => { setActiveTab('trade'); setIsExpanded(true); }}
-              className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'trade' && isExpanded
-                  ? 'bg-tv-blue text-white font-semibold'
-                  : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+                  ? 'bg-[#242731] text-white font-semibold'
+                  : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
               }`}
             >
-              <Calculator className="w-3.5 h-3.5" />
-              <span>Риск-калькулятор (MT)</span>
+              <Calculator className="w-3.5 h-3.5 text-[#2962ff]" />
+              <span>Торговля</span>
             </button>
 
             <button
               onClick={() => { setActiveTab('position'); setIsExpanded(true); }}
-              className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'position' && isExpanded
-                  ? 'bg-tv-blue text-white font-semibold'
-                  : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+                  ? 'bg-[#242731] text-white font-semibold'
+                  : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
               }`}
             >
-              <Layers className="w-3.5 h-3.5" />
               <span>Позиция</span>
               {activePosition && (
-                <span className="w-2 h-2 rounded-full bg-tv-green animate-pulse" />
+                <span className={`w-1.5 h-1.5 rounded-full ${activePosition.side === 'long' ? 'bg-[#089981]' : 'bg-[#f23645]'}`} />
               )}
             </button>
 
             <button
               onClick={() => { setActiveTab('orders'); setIsExpanded(true); }}
-              className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'orders' && isExpanded
-                  ? 'bg-tv-blue text-white font-semibold'
-                  : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+                  ? 'bg-[#242731] text-white font-semibold'
+                  : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
               }`}
             >
               <Clock className="w-3.5 h-3.5" />
-              <span>Лимитные ордера</span>
-              {limitOrders.length > 0 && (
-                <span className="px-1.5 py-0.2 bg-[#f7a600] text-black text-[10px] font-bold rounded-full">
-                  {limitOrders.length}
-                </span>
-              )}
+              <span>Ордера ({limitOrders.length})</span>
             </button>
 
             <button
               onClick={() => { setActiveTab('history'); setIsExpanded(true); }}
-              className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'history' && isExpanded
-                  ? 'bg-tv-blue text-white font-semibold'
-                  : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+                  ? 'bg-[#242731] text-white font-semibold'
+                  : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
               }`}
             >
               <List className="w-3.5 h-3.5" />
@@ -220,10 +208,10 @@ export const TradingPanel: React.FC = () => {
 
             <button
               onClick={() => { setActiveTab('metrics'); setIsExpanded(true); }}
-              className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'metrics' && isExpanded
-                  ? 'bg-tv-blue text-white font-semibold'
-                  : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+                  ? 'bg-[#242731] text-white font-semibold'
+                  : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
               }`}
             >
               <BarChart3 className="w-3.5 h-3.5" />
@@ -232,412 +220,249 @@ export const TradingPanel: React.FC = () => {
 
             <button
               onClick={() => { setActiveTab('scripts'); setIsExpanded(true); }}
-              className={`px-3 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'scripts' && isExpanded
-                  ? 'bg-tv-blue text-white font-semibold'
-                  : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+                  ? 'bg-[#242731] text-white font-semibold'
+                  : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
               }`}
             >
               <Code2 className="w-3.5 h-3.5 text-[#00e5ff]" />
-              <span>Pine / Скрипты</span>
-              {activeScript && (
-                <span className="w-1.5 h-1.5 rounded-full bg-[#00e5ff] animate-pulse" />
-              )}
+              <span>Pine Скрипт</span>
+              {activeScript && <span className="w-1.5 h-1.5 rounded-full bg-[#00e5ff]" />}
             </button>
           </div>
         </div>
 
-        {/* Account Summary Bar */}
-        <div className="flex items-center gap-4 text-xs font-mono">
+        {/* Right Account Metrics */}
+        <div className="flex items-center gap-4 text-xs font-mono tabular-nums">
           <div className="flex items-center gap-1.5">
-            <span className="text-tv-textMuted">Баланс:</span>
-            <span className="font-semibold text-white">${formatPrice(balance, 2)}</span>
+            <span className="text-[#787b86]">Депозит:</span>
+            <span className="font-semibold text-white">{formatCurrency(balance, 2)}</span>
           </div>
 
           <div className="flex items-center gap-1.5">
-            <span className="text-tv-textMuted">PnL:</span>
-            <span
-              className={`font-semibold ${
-                netPnlTotal >= 0 ? 'text-tv-green' : 'text-tv-red'
-              }`}
-            >
+            <span className="text-[#787b86]">PnL:</span>
+            <span className={`font-semibold ${netPnlTotal >= 0 ? 'text-[#089981]' : 'text-[#f23645]'}`}>
               {formatCurrency(netPnlTotal, 2, { showPlus: true })} ({formatPercent(netPnlTotalPercent)})
             </span>
           </div>
 
           <div className="flex items-center gap-1">
-            <span className="text-tv-textMuted">Winrate:</span>
+            <span className="text-[#787b86]">Винрейт:</span>
             <span className="font-semibold text-white">{metrics.winRate}%</span>
           </div>
 
           <button
             onClick={resetBacktest}
-            title="Сбросить депозит и историю бэктеста к $10,000"
-            className="p-1 text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover rounded transition-colors"
+            title="Сбросить сделки и восстановить стартовый баланс"
+            className="p-1 text-[#787b86] hover:text-white hover:bg-[#1e222d] rounded transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* Expanded Content Drawer */}
+      {/* Expanded Drawer Content */}
       {isExpanded && (
-        <div className="p-4 bg-[#1e222d] min-h-[200px] max-h-[320px] overflow-y-auto">
-          {/* TAB 1: RISK & POSITION SIZING CALCULATOR */}
+        <div className="p-4 bg-[#141720] min-h-[220px] max-h-[340px] overflow-y-auto">
+          {/* TAB 1: ORDER ENTRY & LIVE RISK CALCULATION */}
           {activeTab === 'trade' && (
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-              {/* Column 1: Order Type & Risk Settings */}
-              <div className="md:col-span-4 space-y-3 bg-[#131722] p-3.5 rounded-xl border border-[#2a2e39]">
-                <div className="flex items-center justify-between">
-                  {/* Order Type Toggle: Market vs Limit */}
-                  <div className="flex bg-[#1e222d] p-0.5 rounded-lg border border-[#2a2e39]">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 max-w-5xl mx-auto">
+              {/* Left Column: Order Setup Controls (No box nesting!) */}
+              <div className="md:col-span-6 space-y-3.5">
+                {/* Order Type & Side Row */}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Market vs Limit */}
+                  <div className="flex bg-[#10121a] p-0.5 rounded border border-[#242731]">
                     <button
                       onClick={() => handleSetOrderType('market')}
-                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                      className={`flex-1 py-1 text-xs font-medium rounded transition-colors cursor-pointer ${
                         orderSetup.orderType === 'market'
-                          ? 'bg-tv-blue text-white shadow-sm'
-                          : 'text-tv-textMuted hover:text-white'
+                          ? 'bg-[#242731] text-white font-semibold'
+                          : 'text-[#787b86] hover:text-white'
                       }`}
                     >
-                      По рынку (Market)
+                      Market
                     </button>
                     <button
                       onClick={() => handleSetOrderType('limit')}
-                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                      className={`flex-1 py-1 text-xs font-medium rounded transition-colors cursor-pointer ${
                         orderSetup.orderType === 'limit'
-                          ? 'bg-[#f7a600] text-black shadow-sm'
-                          : 'text-tv-textMuted hover:text-white'
+                          ? 'bg-[#242731] text-white font-semibold'
+                          : 'text-[#787b86] hover:text-white'
                       }`}
                     >
-                      Лимитный (Limit)
+                      Limit
                     </button>
                   </div>
 
-                  {/* Mode switcher: % vs $ */}
-                  <div className="flex bg-[#1e222d] p-0.5 rounded-lg border border-[#2a2e39]">
-                    <button
-                      onClick={() => updateRiskSettings({ mode: 'percent' })}
-                      className={`px-2 py-0.5 text-[11px] font-medium rounded ${
-                        riskSettings.mode === 'percent'
-                          ? 'bg-tv-blue text-white'
-                          : 'text-tv-textMuted hover:text-white'
-                      }`}
-                    >
-                      %
-                    </button>
-                    <button
-                      onClick={() => updateRiskSettings({ mode: 'usd' })}
-                      className={`px-2 py-0.5 text-[11px] font-medium rounded ${
-                        riskSettings.mode === 'usd'
-                          ? 'bg-tv-blue text-white'
-                          : 'text-tv-textMuted hover:text-white'
-                      }`}
-                    >
-                      $
-                    </button>
-                  </div>
-                </div>
-
-                {/* Side Selector: LONG vs SHORT */}
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-tv-textMuted font-medium">Направление:</span>
-                  <div className="flex flex-1 bg-[#1e222d] p-0.5 rounded-lg border border-[#2a2e39]">
+                  {/* Long vs Short */}
+                  <div className="flex bg-[#10121a] p-0.5 rounded border border-[#242731]">
                     <button
                       onClick={() => handleSetSide('long')}
-                      className={`flex-1 py-1 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1 ${
+                      className={`flex-1 py-1 text-xs font-bold rounded transition-colors cursor-pointer ${
                         orderSetup.side === 'long'
-                          ? 'bg-[#089981] text-white shadow-sm'
-                          : 'text-tv-textMuted hover:text-white'
+                          ? 'bg-[#089981] text-white'
+                          : 'text-[#787b86] hover:text-white'
                       }`}
                     >
-                      <TrendingUp className="w-3.5 h-3.5" />
-                      <span>LONG</span>
+                      Long
                     </button>
                     <button
                       onClick={() => handleSetSide('short')}
-                      className={`flex-1 py-1 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1 ${
+                      className={`flex-1 py-1 text-xs font-bold rounded transition-colors cursor-pointer ${
                         orderSetup.side === 'short'
-                          ? 'bg-[#f23645] text-white shadow-sm'
-                          : 'text-tv-textMuted hover:text-white'
+                          ? 'bg-[#f23645] text-white'
+                          : 'text-[#787b86] hover:text-white'
                       }`}
                     >
-                      <TrendingDown className="w-3.5 h-3.5" />
-                      <span>SHORT</span>
+                      Short
                     </button>
                   </div>
                 </div>
 
-                {/* If Limit Order, show Limit Price Input */}
-                {orderSetup.orderType === 'limit' && (
-                  <div>
-                    <div className="flex items-center justify-between text-xs mb-1">
-                      <label className="text-tv-text font-medium flex items-center gap-1 text-[#f7a600]">
-                        <Clock className="w-3.5 h-3.5" />
-                        Лимитная цена входа ($)
-                      </label>
+                {/* Risk Setting Row */}
+                <div className="flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[#787b86]">Риск:</span>
+                    <div className="flex bg-[#10121a] p-0.5 rounded border border-[#242731]">
                       <button
-                        onClick={() => updateOrderSetup({ entryPrice: roundPrice(currentPrice) })}
-                        className="text-[10px] text-tv-textMuted hover:text-white underline"
+                        onClick={() => updateRiskSettings({ mode: 'percent' })}
+                        className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+                          riskSettings.mode === 'percent' ? 'bg-[#2962ff] text-white font-bold' : 'text-[#787b86]'
+                        }`}
                       >
-                        Текущая (${formatPrice(currentPrice, symbolInfo.precision)})
+                        %
+                      </button>
+                      <button
+                        onClick={() => updateRiskSettings({ mode: 'usd' })}
+                        className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+                          riskSettings.mode === 'usd' ? 'bg-[#2962ff] text-white font-bold' : 'text-[#787b86]'
+                        }`}
+                      >
+                        $
                       </button>
                     </div>
+                  </div>
+
+                  {/* Quick Risk Presets */}
+                  <div className="flex items-center gap-1.5">
+                    {[0.5, 1.0, 2.0].map((pct) => (
+                      <button
+                        key={pct}
+                        onClick={() => updateRiskSettings({ mode: 'percent', riskPercent: pct })}
+                        className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer ${
+                          riskSettings.mode === 'percent' && riskSettings.riskPercent === pct
+                            ? 'bg-[#242731] text-white font-semibold'
+                            : 'text-[#787b86] hover:text-white'
+                        }`}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
+
+                  <input
+                    type="number"
+                    step={riskSettings.mode === 'percent' ? 0.25 : 100}
+                    value={riskSettings.mode === 'percent' ? riskSettings.riskPercent : riskSettings.riskUsd}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 0;
+                      if (riskSettings.mode === 'percent') {
+                        updateRiskSettings({ riskPercent: val });
+                      } else {
+                        updateRiskSettings({ riskUsd: val });
+                      }
+                    }}
+                    className="w-24 px-2 py-1 bg-[#10121a] border border-[#242731] rounded text-right font-mono text-white text-xs outline-none focus:border-[#2962ff]"
+                  />
+                </div>
+
+                {/* Limit Entry Price (if applicable) */}
+                {orderSetup.orderType === 'limit' && (
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="text-[#787b86]">Лимитная цена:</span>
                     <input
                       type="number"
-                      step={symbolInfo.precision >= 2 ? '0.01' : '0.1'}
-                      value={orderSetup.entryPrice || ''}
-                      onChange={(e) =>
-                        updateOrderSetup({ entryPrice: parseFloat(e.target.value) || 0 })
-                      }
-                      className="w-full px-3 py-1.5 bg-[#1e222d] border border-[#f7a600]/50 rounded-lg text-xs text-white font-mono focus:border-[#f7a600] focus:outline-none"
+                      step={symbolInfo.minMove}
+                      value={orderSetup.entryPrice}
+                      onChange={(e) => updateOrderSetup({ entryPrice: parseFloat(e.target.value) || effectiveEntryPrice })}
+                      className="w-36 px-2.5 py-1 bg-[#10121a] border border-[#242731] rounded text-right font-mono text-white text-xs outline-none focus:border-[#2962ff]"
                     />
                   </div>
                 )}
 
-                {/* Risk input */}
-                <div>
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <label className="text-tv-text">
-                      {riskSettings.mode === 'percent' ? 'Риск на сделку (% от баланса)' : 'Сумма риска ($)'}
-                    </label>
-                    <span className="font-mono text-tv-yellow font-semibold">
-                      ${riskCalc.riskUsd}
-                    </span>
-                  </div>
-
-                  {riskSettings.mode === 'percent' ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        step="0.5"
-                        min="0.1"
-                        max="50"
-                        value={riskSettings.riskPercent}
-                        onChange={(e) =>
-                          updateRiskSettings({ riskPercent: parseFloat(e.target.value) || 1.0 })
-                        }
-                        className="w-full px-3 py-1.5 bg-[#1e222d] border border-[#2a2e39] rounded-lg text-xs text-white font-mono focus:border-tv-blue focus:outline-none"
-                      />
-                      <div className="flex items-center gap-1 shrink-0">
-                        {[0.5, 1.0, 2.0, 3.0].map((p) => (
-                          <button
-                            key={p}
-                            onClick={() => updateRiskSettings({ riskPercent: p })}
-                            className={`px-2 py-1 text-[10px] font-mono rounded border transition-colors ${
-                              riskSettings.riskPercent === p
-                                ? 'border-tv-blue bg-tv-blue/20 text-tv-blue font-bold'
-                                : 'border-[#2a2e39] text-tv-textMuted hover:text-white'
-                            }`}
-                          >
-                            {p}%
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <input
-                      type="number"
-                      step="10"
-                      min="1"
-                      value={riskSettings.riskUsd}
-                      onChange={(e) =>
-                        updateRiskSettings({ riskUsd: parseFloat(e.target.value) || 100 })
-                      }
-                      className="w-full px-3 py-1.5 bg-[#1e222d] border border-[#2a2e39] rounded-lg text-xs text-white font-mono focus:border-tv-blue focus:outline-none"
-                    />
-                  )}
-                </div>
-
-                {/* SL and TP Inputs with Presets */}
-                <div className="space-y-2 pt-1">
-                  {/* Stop Loss Row */}
+                {/* Stop Loss & Take Profit */}
+                <div className="grid grid-cols-2 gap-3 text-xs">
                   <div>
-                    <div className="flex items-center justify-between text-[11px] mb-1">
-                      <label className="text-tv-text font-medium flex items-center gap-1 text-tv-red">
-                        <span>Stop Loss ($)</span>
-                      </label>
-                      <div className="flex items-center gap-1">
-                        {[0.5, 1.0, 1.5, 2.0].map((pct) => (
-                          <button
-                            key={pct}
-                            onClick={() => {
-                              const dist = roundPrice(effectiveEntryPrice * (pct / 100));
-                              const newSl = orderSetup.side === 'long' ? effectiveEntryPrice - dist : effectiveEntryPrice + dist;
-                              updateOrderSetup({ stopLoss: roundPrice(newSl) });
-                            }}
-                            className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-[#1e222d] hover:bg-tv-red/30 border border-[#2a2e39] text-tv-textMuted hover:text-white transition-colors"
-                          >
-                            {pct}%
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <div className="text-[#787b86] text-[11px] mb-1">Stop Loss</div>
                     <input
                       type="number"
-                      step={symbolInfo.precision >= 2 ? '0.01' : '0.1'}
-                      value={orderSetup.stopLoss || ''}
-                      onChange={(e) =>
-                        updateOrderSetup({ stopLoss: parseFloat(e.target.value) || 0 })
-                      }
-                      className="w-full px-2.5 py-1.5 bg-[#1e222d] border border-tv-red/50 rounded-lg text-xs text-white font-mono focus:border-tv-red focus:outline-none"
+                      step={symbolInfo.minMove}
+                      value={orderSetup.stopLoss}
+                      onChange={(e) => updateOrderSetup({ stopLoss: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-2.5 py-1.5 bg-[#10121a] border border-[#242731] rounded font-mono text-white text-xs outline-none focus:border-[#2962ff]"
                     />
                   </div>
 
-                  {/* Take Profit Row */}
                   <div>
-                    <div className="flex items-center justify-between text-[11px] mb-1">
-                      <label className="text-tv-text font-medium flex items-center gap-1 text-tv-green">
-                        <span>Take Profit ($)</span>
-                      </label>
-                      <div className="flex items-center gap-1">
-                        {[1.5, 2.0, 3.0, 4.0].map((rr) => (
-                          <button
-                            key={rr}
-                            onClick={() => {
-                              const slDist = Math.abs(effectiveEntryPrice - orderSetup.stopLoss);
-                              if (slDist > 0) {
-                                const tpDist = roundPrice(slDist * rr);
-                                const newTp = orderSetup.side === 'long' ? effectiveEntryPrice + tpDist : effectiveEntryPrice - tpDist;
-                                updateOrderSetup({ takeProfit: roundPrice(newTp) });
-                              }
-                            }}
-                            className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-[#1e222d] hover:bg-tv-green/30 border border-[#2a2e39] text-tv-textMuted hover:text-white transition-colors"
-                          >
-                            1:{rr}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <div className="text-[#787b86] text-[11px] mb-1">Take Profit</div>
                     <input
                       type="number"
-                      step="0.5"
-                      value={orderSetup.takeProfit || ''}
-                      onChange={(e) =>
-                        updateOrderSetup({ takeProfit: parseFloat(e.target.value) || 0 })
-                      }
-                      className="w-full px-2.5 py-1.5 bg-[#1e222d] border border-tv-green/50 rounded-lg text-xs text-white font-mono focus:border-tv-green focus:outline-none"
+                      step={symbolInfo.minMove}
+                      value={orderSetup.takeProfit}
+                      onChange={(e) => updateOrderSetup({ takeProfit: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-2.5 py-1.5 bg-[#10121a] border border-[#242731] rounded font-mono text-white text-xs outline-none focus:border-[#2962ff]"
                     />
                   </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-1 text-[11px] text-tv-textMuted border-t border-[#2a2e39]/50">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-tv-yellow font-bold">✨ Drag & Drop:</span>
-                    <span>Тяните SL/TP на графике!</span>
-                  </div>
-                  <button
-                    onClick={() => updateOrderSetup({ enabled: !orderSetup.enabled })}
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
-                      orderSetup.enabled
-                        ? 'border-tv-blue bg-tv-blue/20 text-tv-blue'
-                        : 'border-[#2a2e39] text-tv-textMuted hover:text-white'
-                    }`}
-                    title="Показать или скрыть интерактивные уровни ордера на графике"
-                  >
-                    {orderSetup.enabled ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                    <span>{orderSetup.enabled ? 'На графике' : 'Скрыты'}</span>
-                  </button>
                 </div>
               </div>
 
-              {/* Column 2: Auto-calculated position details */}
-              <div className="md:col-span-5 bg-[#131722] p-3.5 rounded-xl border border-[#2a2e39] flex flex-col justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider mb-2">
-                    Автоматический расчет позиции (MetaTrader)
+              {/* Right Column: High-Clarity Calculation & Execution CTA */}
+              <div className="md:col-span-6 flex flex-col justify-between border-l border-[#242731] pl-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4 font-mono text-xs">
+                  <div>
+                    <div className="text-[#787b86] text-[10px] uppercase">Объем позиции</div>
+                    <div className="text-xl font-bold text-white mt-0.5">
+                      {riskCalc.sizeAsset} <span className="text-xs text-[#787b86] font-normal">{symbolInfo.assetClass === 'forex' ? 'lots' : symbolInfo.baseAsset}</span>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-                    <div className="p-2 bg-[#1e222d] rounded-lg">
-                      <div className="text-[10px] text-tv-textMuted">Объем позиции:</div>
-                      <div className="text-white font-semibold text-sm">
-                        {riskCalc.sizeAsset} {symbolInfo.baseAsset}
-                      </div>
-                    </div>
 
-                    <div className="p-2 bg-[#1e222d] rounded-lg">
-                      <div className="text-[10px] text-tv-textMuted">Номинал USDT:</div>
-                      <div className="text-white font-semibold text-sm">
-                        ${formatPrice(riskCalc.notionalUsdt, 1)}
-                      </div>
+                  <div>
+                    <div className="text-[#787b86] text-[10px] uppercase">Соотношение R:R</div>
+                    <div className="text-xl font-bold text-white mt-0.5">
+                      1 : {riskCalc.riskRewardRatio.toFixed(2)}
                     </div>
+                  </div>
 
-                    <div className="p-2 bg-[#1e222d] rounded-lg">
-                      <div className="text-[10px] text-tv-textMuted">Дистанция SL:</div>
-                      <div className="text-tv-red font-semibold">
-                        ${riskCalc.stopDistance} ({riskCalc.stopDistancePercent}%)
-                      </div>
+                  <div>
+                    <div className="text-[#787b86] text-[10px] uppercase">Риск (убыток)</div>
+                    <div className="text-sm font-semibold text-[#f23645] mt-0.5">
+                      -{formatCurrency(riskCalc.riskUsd, 2)}
                     </div>
+                  </div>
 
-                    <div className="p-2 bg-[#1e222d] rounded-lg">
-                      <div className="text-[10px] text-tv-textMuted">Risk / Reward (R:R):</div>
-                      <div className="text-tv-green font-semibold">
-                        1 : {riskCalc.riskRewardRatio || '2.0'}
-                      </div>
+                  <div>
+                    <div className="text-[#787b86] text-[10px] uppercase">Потенциал (профит)</div>
+                    <div className="text-sm font-semibold text-[#089981] mt-0.5">
+                      +{formatCurrency(riskCalc.potentialProfitUsd, 2)}
                     </div>
                   </div>
                 </div>
 
-                <div className="text-[11px] text-tv-textMuted mt-2 pt-2 border-t border-[#2a2e39] flex items-center justify-between">
-                  <span>При срабатывании SL убыток:</span>
-                  <span className="text-tv-red font-mono font-semibold">-${riskCalc.riskUsd}</span>
-                </div>
-              </div>
-
-              {/* Column 3: Order Execution Buttons */}
-              <div className="md:col-span-3 flex flex-col justify-between gap-2 bg-[#131722] p-3.5 rounded-xl border border-[#2a2e39]">
-                <div className="text-xs font-semibold text-tv-textMuted uppercase tracking-wider">
-                  {orderSetup.orderType === 'market' ? 'Рыночное исполнение' : 'Выставление лимитки'}
-                </div>
-
-                <div className="space-y-2">
-                  <button
-                    onClick={() => {
-                      handleSetSide('long');
-                      handleExecuteTrade('long');
-                    }}
-                    className={`w-full py-2.5 px-4 text-white font-semibold text-xs rounded-xl shadow-lg transition-all flex items-center justify-between ${
-                      orderSetup.side === 'long'
-                        ? orderSetup.orderType === 'market'
-                          ? 'bg-tv-green hover:bg-tv-greenHover shadow-tv-green/20 ring-2 ring-white/30'
-                          : 'bg-[#089981] hover:bg-[#067a67] border border-white/20 ring-2 ring-white/30'
-                        : 'bg-[#1e222d] hover:bg-[#2a2e39] text-tv-text border border-[#2a2e39]'
-                    }`}
-                  >
-                    <span className="flex items-center gap-1.5">
-                      <TrendingUp className="w-4 h-4 text-[#089981]" />
-                      {orderSetup.orderType === 'market' ? 'КУПИТЬ / LONG' : 'LIMIT LONG'}
-                    </span>
-                    <span className="font-mono text-[11px] opacity-90">
-                      ${formatPrice(effectiveEntryPrice, 1)}
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      handleSetSide('short');
-                      handleExecuteTrade('short');
-                    }}
-                    className={`w-full py-2.5 px-4 text-white font-semibold text-xs rounded-xl shadow-lg transition-all flex items-center justify-between ${
-                      orderSetup.side === 'short'
-                        ? orderSetup.orderType === 'market'
-                          ? 'bg-tv-red hover:bg-tv-redHover shadow-tv-red/20 ring-2 ring-white/30'
-                          : 'bg-[#d32635] hover:bg-[#b01e2b] border border-white/20 ring-2 ring-white/30'
-                        : 'bg-[#1e222d] hover:bg-[#2a2e39] text-tv-text border border-[#2a2e39]'
-                    }`}
-                  >
-                    <span className="flex items-center gap-1.5">
-                      <TrendingDown className="w-4 h-4 text-[#f23645]" />
-                      {orderSetup.orderType === 'market' ? 'ПРОДАТЬ / SHORT' : 'LIMIT SHORT'}
-                    </span>
-                    <span className="font-mono text-[11px] opacity-90">
-                      ${formatPrice(effectiveEntryPrice, 1)}
-                    </span>
-                  </button>
-                </div>
-
-                <div className="text-[10px] text-tv-textMuted text-center">
-                  Комиссия Funding Pips: {feeSettings.commissionPercent}%
-                </div>
+                {/* Primary Action Button */}
+                <button
+                  onClick={() => handleExecuteTrade(orderSetup.side)}
+                  className={`w-full py-2.5 rounded font-semibold text-xs tracking-wider uppercase transition-all cursor-pointer shadow-lg ${
+                    orderSetup.side === 'long'
+                      ? 'bg-[#089981] hover:bg-[#067a67] text-white shadow-[#089981]/20'
+                      : 'bg-[#f23645] hover:bg-[#d32635] text-white shadow-[#f23645]/20'
+                  }`}
+                >
+                  {orderSetup.orderType === 'market'
+                    ? `Открыть ${orderSetup.side.toUpperCase()} по ${formatPrice(currentPrice, symbolInfo.precision)}`
+                    : `Выставить Limit ${orderSetup.side.toUpperCase()} по ${formatPrice(orderSetup.entryPrice, symbolInfo.precision)}`}
+                </button>
               </div>
             </div>
           )}
@@ -646,314 +471,207 @@ export const TradingPanel: React.FC = () => {
           {activeTab === 'position' && (
             <div>
               {activePosition ? (
-                <div className="bg-[#131722] p-4 rounded-xl border border-[#2a2e39] flex flex-col md:flex-row items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold uppercase font-mono tracking-wider ${
-                        activePosition.side === 'long'
-                          ? 'bg-tv-green/20 text-tv-green border border-tv-green/30'
-                          : 'bg-tv-red/20 text-tv-red border border-tv-red/30'
-                      }`}
-                    >
-                      {activePosition.side}
-                    </span>
-                    <div>
-                      <div className="text-sm font-semibold text-white font-mono">
-                        {activePosition.size} {symbolInfo.baseAsset} @ ${formatPrice(activePosition.entryPrice, symbolInfo.precision)}
-                      </div>
-                      <div className="text-[11px] text-tv-textMuted font-mono">
-                        Открыта: {formatDateTime(activePosition.entryTime, timezone)}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
-                    <div>
-                      <span className="text-tv-textMuted block text-[10px]">Stop Loss (перетаскиваемый):</span>
-                      <span className="text-tv-red font-semibold">
-                        ${activePosition.stopLoss ? formatPrice(activePosition.stopLoss) : '—'}
-                      </span>
-                    </div>
-
-                    <div>
-                      <span className="text-tv-textMuted block text-[10px]">Take Profit (перетаскиваемый):</span>
-                      <span className="text-tv-green font-semibold">
-                        ${activePosition.takeProfit ? formatPrice(activePosition.takeProfit) : '—'}
-                      </span>
-                    </div>
-
-                    <div>
-                      <span className="text-tv-textMuted block text-[10px]">Комиссии + Своп:</span>
-                      <span className="text-tv-text font-semibold">
-                        -${(activePosition.feeOpen + Math.abs(activePosition.accumulatedSwap)).toFixed(2)}
-                      </span>
-                    </div>
-
-                    <div>
-                      <span className="text-tv-textMuted block text-[10px]">Нереализованный PnL:</span>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-[#242731]">
+                    <div className="flex items-center gap-3">
                       <span
-                        className={`text-sm font-bold ${
-                          activePosition.unrealizedNetPnl >= 0 ? 'text-tv-green' : 'text-tv-red'
+                        className={`px-2 py-0.5 rounded text-xs font-bold uppercase font-mono ${
+                          activePosition.side === 'long' ? 'bg-[#089981]/20 text-[#089981]' : 'bg-[#f23645]/20 text-[#f23645]'
                         }`}
                       >
-                        {formatCurrency(activePosition.unrealizedNetPnl, 2, { showPlus: true })}
+                        {activePosition.side}
+                      </span>
+                      <span className="font-semibold text-sm text-white font-mono">{symbolInfo.symbol}</span>
+                      <span className="text-xs text-[#787b86] font-mono">
+                        Объем: {activePosition.size} {symbolInfo.baseAsset}
                       </span>
                     </div>
+
+                    <button
+                      onClick={closeActivePosition}
+                      className="px-3 py-1 bg-[#f23645] hover:bg-[#d32635] text-white rounded text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      Закрыть по рынку
+                    </button>
                   </div>
 
-                  <button
-                    onClick={closeActivePosition}
-                    className="px-4 py-2 bg-tv-surfaceHover hover:bg-tv-red hover:text-white text-xs font-medium rounded-xl border border-[#2a2e39] transition-colors shrink-0"
-                  >
-                    Закрыть по рынку
-                  </button>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs font-mono">
+                    <div>
+                      <div className="text-[#787b86]">Вход</div>
+                      <div className="text-white font-medium">{formatPrice(activePosition.entryPrice, symbolInfo.precision)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[#787b86]">Текущая цена</div>
+                      <div className="text-white font-medium">{formatPrice(activePosition.currentPrice, symbolInfo.precision)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[#787b86]">Stop Loss</div>
+                      <div className="text-[#f23645] font-medium">{activePosition.stopLoss ? formatPrice(activePosition.stopLoss, symbolInfo.precision) : '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-[#787b86]">Take Profit</div>
+                      <div className="text-[#089981] font-medium">{activePosition.takeProfit ? formatPrice(activePosition.takeProfit, symbolInfo.precision) : '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-[#787b86]">Нереализованный PnL</div>
+                      <div className={`font-bold ${activePosition.unrealizedNetPnl >= 0 ? 'text-[#089981]' : 'text-[#f23645]'}`}>
+                        {formatCurrency(activePosition.unrealizedNetPnl, 2, { showPlus: true })}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               ) : (
-                <div className="text-center py-8 text-xs text-tv-textMuted">
-                  Нет открытых позиций. Откройте Market или выставьте Limit в первой вкладке.
+                <div className="text-center py-8 text-xs text-[#787b86]">
+                  Нет открытых позиций в текущей симуляции
                 </div>
               )}
             </div>
           )}
 
-          {/* TAB 3: PENDING LIMIT ORDERS */}
+          {/* TAB 3: LIMIT ORDERS */}
           {activeTab === 'orders' && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-tv-textMuted">
-                  Отложенные лимитные ордера: {limitOrders.length}
-                </span>
-                <span className="text-[11px] text-tv-textMuted">
-                  💡 При движении свечей в симуляторе ордер сработает при касании цены!
-                </span>
-              </div>
-
-              {limitOrders.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs font-mono">
-                    <thead className="bg-[#131722] text-tv-textMuted text-[10px] uppercase border-b border-[#2a2e39]">
-                      <tr>
-                        <th className="py-2 px-3">Тип</th>
-                        <th className="py-2 px-3">Лимитная цена</th>
-                        <th className="py-2 px-3">Объем</th>
-                        <th className="py-2 px-3">Stop Loss</th>
-                        <th className="py-2 px-3">Take Profit</th>
-                        <th className="py-2 px-3">Риск USD</th>
-                        <th className="py-2 px-3">Время выставления</th>
-                        <th className="py-2 px-3 text-right">Действие</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#2a2e39]/50">
-                      {limitOrders.map((o) => (
-                        <tr key={o.id} className="hover:bg-[#131722]/60 transition-colors">
-                          <td className="py-2 px-3 font-semibold">
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[10px] ${
-                                o.side === 'long'
-                                  ? 'bg-[#089981]/20 text-[#089981]'
-                                  : 'bg-[#f23645]/20 text-[#f23645]'
-                              }`}
-                            >
-                              LIMIT {o.side.toUpperCase()}
-                            </span>
-                          </td>
-                          <td className="py-2 px-3 text-[#f7a600] font-bold">
-                            ${formatPrice(o.limitPrice, symbolInfo.precision)}
-                          </td>
-                          <td className="py-2 px-3 text-white">{o.size} {symbolInfo.baseAsset}</td>
-                          <td className="py-2 px-3 text-tv-red">
-                            ${o.stopLoss ? formatPrice(o.stopLoss, symbolInfo.precision) : '—'}
-                          </td>
-                          <td className="py-2 px-3 text-tv-green">
-                            ${o.takeProfit ? formatPrice(o.takeProfit, symbolInfo.precision) : '—'}
-                          </td>
-                          <td className="py-2 px-3 text-tv-yellow font-semibold">
-                            ${o.riskUsd}
-                          </td>
-                          <td className="py-2 px-3 text-tv-textMuted">
-                            {formatDateTime(o.createdTime, timezone)}
-                          </td>
-                          <td className="py-2 px-3 text-right">
-                            <button
-                              onClick={() => cancelLimitOrder(o.id)}
-                              className="px-2.5 py-1 bg-tv-red/10 hover:bg-tv-red text-tv-red hover:text-white rounded-lg transition-colors text-[11px] font-sans font-medium"
-                            >
-                              Отменить
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            <div>
+              {limitOrders.length === 0 ? (
+                <div className="text-center py-8 text-xs text-[#787b86]">
+                  Нет активных лимитных ордеров
                 </div>
               ) : (
-                <div className="text-center py-8 text-xs text-tv-textMuted">
-                  Нет активных лимитных ордеров. Выберите «Лимитный (Limit)» в первой вкладке.
-                </div>
+                <table className="w-full text-left text-xs font-mono">
+                  <thead>
+                    <tr className="text-[#787b86] border-b border-[#242731]">
+                      <th className="pb-2 font-medium">Тип</th>
+                      <th className="pb-2 font-medium">Лимитная цена</th>
+                      <th className="pb-2 font-medium">Объем</th>
+                      <th className="pb-2 font-medium">Stop Loss</th>
+                      <th className="pb-2 font-medium">Take Profit</th>
+                      <th className="pb-2 font-medium text-right">Действие</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#242731]">
+                    {limitOrders.map((ord) => (
+                      <tr key={ord.id} className="hover:bg-[#1e222d] transition-colors">
+                        <td className="py-2">
+                          <span className={ord.side === 'long' ? 'text-[#089981] font-bold' : 'text-[#f23645] font-bold'}>
+                            LIMIT {ord.side.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="py-2 text-white">{formatPrice(ord.limitPrice, symbolInfo.precision)}</td>
+                        <td className="py-2 text-[#d1d4dc]">{ord.size}</td>
+                        <td className="py-2 text-[#f23645]">{ord.stopLoss ? formatPrice(ord.stopLoss, symbolInfo.precision) : '—'}</td>
+                        <td className="py-2 text-[#089981]">{ord.takeProfit ? formatPrice(ord.takeProfit, symbolInfo.precision) : '—'}</td>
+                        <td className="py-2 text-right">
+                          <button
+                            onClick={() => cancelLimitOrder(ord.id)}
+                            className="px-2 py-0.5 text-xs text-[#f23645] hover:bg-[#f23645]/10 rounded"
+                          >
+                            Отменить
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           )}
 
           {/* TAB 4: TRADES HISTORY */}
           {activeTab === 'history' && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-tv-textMuted">
-                  Всего закрытых сделок: {closedTrades.length}
-                </span>
+            <div>
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#242731]">
+                <span className="text-xs text-[#787b86]">Всего сделок: {closedTrades.length}</span>
                 {closedTrades.length > 0 && (
                   <button
                     onClick={handleExportCsv}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-[#131722] hover:bg-tv-surfaceHover border border-[#2a2e39] rounded-lg text-xs text-tv-text hover:text-white transition-colors"
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-[#242731] hover:bg-[#2e3240] text-[#d1d4dc] hover:text-white rounded text-xs transition-colors cursor-pointer"
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Экспорт в CSV</span>
+                    <Download className="w-3 h-3" />
+                    <span>Экспорт CSV</span>
                   </button>
                 )}
               </div>
 
-              {closedTrades.length > 0 ? (
-                <div className="overflow-x-auto">
+              {closedTrades.length === 0 ? (
+                <div className="text-center py-8 text-xs text-[#787b86]">
+                  История сделок пуста. Совершите первую сделку на графике.
+                </div>
+              ) : (
+                <div className="max-h-56 overflow-y-auto">
                   <table className="w-full text-left text-xs font-mono">
-                    <thead className="bg-[#131722] text-tv-textMuted text-[10px] uppercase border-b border-[#2a2e39]">
-                      <tr>
-                        <th className="py-2 px-3">Тип</th>
-                        <th className="py-2 px-3">Время входа</th>
-                        <th className="py-2 px-3">Вход</th>
-                        <th className="py-2 px-3">Выход</th>
-                        <th className="py-2 px-3">Объем</th>
-                        <th className="py-2 px-3">Комиссии</th>
-                        <th className="py-2 px-3">Своп</th>
-                        <th className="py-2 px-3">Чистый PnL</th>
-                        <th className="py-2 px-3">Доходность</th>
-                        <th className="py-2 px-3">Причина</th>
+                    <thead>
+                      <tr className="text-[#787b86] border-b border-[#242731]">
+                        <th className="pb-1.5 font-medium">Направление</th>
+                        <th className="pb-1.5 font-medium">Вход</th>
+                        <th className="pb-1.5 font-medium">Выход</th>
+                        <th className="pb-1.5 font-medium">Объем</th>
+                        <th className="pb-1.5 font-medium">Чистый PnL</th>
+                        <th className="pb-1.5 font-medium">Причина</th>
+                        <th className="pb-1.5 font-medium text-right">Время выхода</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#2a2e39]/50">
-                      {closedTrades.map((t) => (
-                        <tr key={t.id} className="hover:bg-[#131722]/60 transition-colors">
-                          <td className="py-2 px-3 font-semibold">
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[10px] ${
-                                t.side === 'long'
-                                  ? 'bg-tv-green/20 text-tv-green'
-                                  : 'bg-tv-red/20 text-tv-red'
-                              }`}
-                            >
+                    <tbody className="divide-y divide-[#242731]">
+                      {closedTrades.slice().reverse().map((t) => (
+                        <tr key={t.id} className="hover:bg-[#1e222d] transition-colors">
+                          <td className="py-2">
+                            <span className={t.side === 'long' ? 'text-[#089981] font-semibold' : 'text-[#f23645] font-semibold'}>
                               {t.side.toUpperCase()}
                             </span>
                           </td>
-                          <td className="py-2 px-3 text-tv-textMuted">
-                            {formatDateTime(t.entryTime, timezone)}
-                          </td>
-                          <td className="py-2 px-3 text-white">${formatPrice(t.entryPrice, symbolInfo.precision)}</td>
-                          <td className="py-2 px-3 text-white">${formatPrice(t.exitPrice, symbolInfo.precision)}</td>
-                          <td className="py-2 px-3">{t.size} {symbolInfo.baseAsset}</td>
-                          <td className="py-2 px-3 text-tv-textMuted">
-                            -${(t.feeOpen + t.feeClose).toFixed(2)}
-                          </td>
-                          <td className="py-2 px-3 text-tv-textMuted">
-                            -${Math.abs(t.swapFee).toFixed(2)}
-                          </td>
-                          <td
-                            className={`py-2 px-3 font-semibold ${
-                              t.netPnl >= 0 ? 'text-tv-green' : 'text-tv-red'
-                            }`}
-                          >
+                          <td className="py-2 text-white">{formatPrice(t.entryPrice, symbolInfo.precision)}</td>
+                          <td className="py-2 text-white">{formatPrice(t.exitPrice, symbolInfo.precision)}</td>
+                          <td className="py-2 text-[#d1d4dc]">{t.size}</td>
+                          <td className={`py-2 font-bold ${t.netPnl >= 0 ? 'text-[#089981]' : 'text-[#f23645]'}`}>
                             {formatCurrency(t.netPnl, 2, { showPlus: true })}
                           </td>
-                          <td
-                            className={`py-2 px-3 ${
-                              t.netPnl >= 0 ? 'text-tv-green' : 'text-tv-red'
-                            }`}
-                          >
-                            {formatPercent(t.returnPercent)}
-                          </td>
-                          <td className="py-2 px-3 text-tv-textMuted capitalize">
-                            {t.closeReason === 'take_profit' ? (
-                              <span className="text-tv-green font-medium">Take Profit</span>
-                            ) : t.closeReason === 'stop_loss' ? (
-                              <span className="text-tv-red font-medium">Stop Loss</span>
-                            ) : (
-                              'Ручное'
-                            )}
-                          </td>
+                          <td className="py-2 text-[#787b86] capitalize">{t.closeReason.replace('_', ' ')}</td>
+                          <td className="py-2 text-right text-[#787b86]">{formatDateTime(t.exitTime, timezone)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              ) : (
-                <div className="text-center py-8 text-xs text-tv-textMuted">
-                  Сделок пока нет. Войдите в позицию и сделайте шаг вперед в симуляторе.
-                </div>
               )}
             </div>
           )}
 
-          {/* TAB 5: METRICS & ANALYTICS */}
+          {/* TAB 5: BACKTEST METRICS */}
           {activeTab === 'metrics' && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
-              <div className="p-3 bg-[#131722] rounded-xl border border-[#2a2e39]">
-                <div className="text-[10px] text-tv-textMuted uppercase font-semibold">
-                  Всего трейдов
-                </div>
-                <div className="text-base font-bold text-white mt-1 font-mono">
-                  {metrics.totalTrades}
-                </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
+              <div className="p-3 bg-[#10121a] rounded">
+                <div className="text-[#787b86]">Винрейт</div>
+                <div className="text-xl font-bold text-white mt-1">{metrics.winRate}%</div>
+                <div className="text-[10px] text-[#787b86] mt-0.5">{metrics.wins} плюсов / {metrics.losses} минусов</div>
               </div>
 
-              <div className="p-3 bg-[#131722] rounded-xl border border-[#2a2e39]">
-                <div className="text-[10px] text-tv-textMuted uppercase font-semibold">Винрейт</div>
-                <div className="text-base font-bold text-tv-green mt-1 font-mono">
-                  {metrics.winRate}%
-                </div>
+              <div className="p-3 bg-[#10121a] rounded">
+                <div className="text-[#787b86]">Profit Factor</div>
+                <div className="text-xl font-bold text-white mt-1">{metrics.profitFactor}</div>
+                <div className="text-[10px] text-[#787b86] mt-0.5">Отношение валовой прибыли к убытку</div>
               </div>
 
-              <div className="p-3 bg-[#131722] rounded-xl border border-[#2a2e39]">
-                <div className="text-[10px] text-tv-textMuted uppercase font-semibold">
-                  Чистая прибыль
-                </div>
-                <div
-                  className={`text-base font-bold mt-1 font-mono ${
-                    metrics.netProfit >= 0 ? 'text-tv-green' : 'text-tv-red'
-                  }`}
-                >
+              <div className="p-3 bg-[#10121a] rounded">
+                <div className="text-[#787b86]">Чистая прибыль</div>
+                <div className={`text-xl font-bold mt-1 ${metrics.netProfit >= 0 ? 'text-[#089981]' : 'text-[#f23645]'}`}>
                   {formatCurrency(metrics.netProfit, 2, { showPlus: true })}
                 </div>
+                <div className="text-[10px] text-[#787b86] mt-0.5">С учетом комиссий и свопов</div>
               </div>
 
-              <div className="p-3 bg-[#131722] rounded-xl border border-[#2a2e39]">
-                <div className="text-[10px] text-tv-textMuted uppercase font-semibold">
-                  Profit Factor
+              <div className="p-3 bg-[#10121a] rounded">
+                <div className="text-[#787b86]">Макс. просадка</div>
+                <div className="text-xl font-bold text-[#f23645] mt-1">
+                  {formatPercent(metrics.maxDrawdownPercent)}
                 </div>
-                <div className="text-base font-bold text-white mt-1 font-mono">
-                  {metrics.profitFactor > 900 ? '∞' : metrics.profitFactor}
-                </div>
-              </div>
+                <div className="text-[10px] text-[#787b86] mt-0.5">{formatCurrency(metrics.maxDrawdown, 2)}</div>
 
-              <div className="p-3 bg-[#131722] rounded-xl border border-[#2a2e39]">
-                <div className="text-[10px] text-tv-textMuted uppercase font-semibold">
-                  Макс. просадка
-                </div>
-                <div className="text-base font-bold text-tv-red mt-1 font-mono">
-                  {formatCurrency(metrics.maxDrawdown, 2)} ({metrics.maxDrawdownPercent}%)
-                </div>
-              </div>
-
-              <div className="p-3 bg-[#131722] rounded-xl border border-[#2a2e39]">
-                <div className="text-[10px] text-tv-textMuted uppercase font-semibold">
-                  Комиссии + Свопы
-                </div>
-                <div className="text-base font-bold text-tv-yellow mt-1 font-mono">
-                  {formatCurrency(-(metrics.totalCommissions + metrics.totalSwaps), 2)}
-                </div>
               </div>
             </div>
           )}
 
-          {/* TAB 6: PINE / CUSTOM SCRIPT IDE */}
-          {activeTab === 'scripts' && <ScriptEditorTab />}
+          {/* TAB 6: PINE SCRIPTS */}
+          {activeTab === 'scripts' && (
+            <ScriptEditorTab />
+          )}
         </div>
       )}
     </div>

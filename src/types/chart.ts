@@ -94,15 +94,30 @@ export interface DrawingObject {
   color?: string;
   fillColor?: string;
   fillOpacity?: number;
+  borderVisible?: boolean;
+  fillVisible?: boolean;
   lineWidth?: number;
-  lineStyle?: 'solid' | 'dashed';
+  lineStyle?: 'solid' | 'dashed' | 'dotted';
   extendRight?: boolean;
   extendLeft?: boolean;
+  isLocked?: boolean;
+  text?: string;
+  textColor?: string;
+  fontSize?: number;
+  textVAlign?: 'top' | 'middle' | 'bottom';
+  textHAlign?: 'left' | 'center' | 'right';
   riskReward?: {
     entryPrice: number;
     stopLossPrice: number;
     takeProfitPrice: number;
   };
+}
+
+export interface DrawingTemplate {
+  id: string;
+  name: string;
+  tool: DrawingTool;
+  settings: Partial<DrawingObject>;
 }
 
 export interface ReplayState {
@@ -117,11 +132,12 @@ export interface ReplayState {
 // ==========================================
 // Market Sessions & Killzones
 // ==========================================
-export type MarketSessionId = 'asia' | 'london' | 'newyork' | 'asia_kz' | 'london_kz' | 'ny_kz';
+export type MarketSessionId = 'asia' | 'london' | 'lunch' | 'newyork' | 'asia_kz' | 'london_kz' | 'ny_kz' | string;
 
 export interface MarketSessionConfig {
   id: MarketSessionId;
   name: string;
+  label?: string;
   enabled: boolean;
   startHour: number;   // UTC hour 0-23
   startMinute: number; // 0-59
@@ -135,8 +151,13 @@ export interface MarketSessionConfig {
 
 export interface MarketSessionsSettings {
   enabled: boolean;
+  renderStyle: 'box' | 'column';      // 'box' = sleek Range Box, 'column' = full height stripe
   showHighLow: boolean;
   showLabels: boolean;
+  showMidline: boolean;               // 50% Equilibrium line
+  extendHighLow: boolean;             // Extend High/Low into future
+  maxDays: number;                    // 0 = all, 3 = last 3 days, 5 = last 5 days
+  highLowStyle: 'clean' | 'detailed'; // clean = subtle line, detailed = large price tags
   sessions: Record<string, MarketSessionConfig>;
 }
 

@@ -17,10 +17,14 @@ import { useChart } from '../../context/ChartContext';
 import { formatDateTime, formatPrice, formatTickMark, formatVolume, TIMEZONE_OPTIONS } from '../../utils/formatters';
 import { calculateRiskPosition } from '../../services/tradeEngine';
 import { SUPPORTED_SYMBOLS, SupportedSymbol } from '../../types/session';
-import { Scissors, GripVertical, X, Globe, ChevronDown, Check, Eye, EyeOff } from 'lucide-react';
+import { Scissors, GripVertical, X, Globe, ChevronDown, Check, Eye, EyeOff, Settings } from 'lucide-react';
 import { DrawingLayer } from './DrawingLayer';
 import { SessionsLayer } from './SessionsLayer';
+import { SessionSettingsModal } from './SessionSettingsModal';
 import { ScriptOverlayLayer } from './ScriptOverlayLayer';
+import { NewsLayer } from './NewsLayer';
+
+
 
 interface DragState {
   type:
@@ -66,6 +70,7 @@ export const TradingViewChart: React.FC = () => {
 
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [isTzDropdownOpen, setIsTzDropdownOpen] = useState(false);
+  const [isSessionSettingsOpen, setIsSessionSettingsOpen] = useState(false);
   const [chartInstance, setChartInstance] = useState<IChartApi | null>(null);
   const [candleSeriesInstance, setCandleSeriesInstance] = useState<ISeriesApi<'Candlestick'> | null>(null);
 
@@ -103,6 +108,7 @@ export const TradingViewChart: React.FC = () => {
     updateLimitOrderTP,
     cancelLimitOrder,
     symbolInfo,
+    viewportFocusTrigger,
   } = useChart();
 
   // Initialize chart
@@ -218,6 +224,9 @@ export const TradingViewChart: React.FC = () => {
     let rafId: number | null = null;
     let wheelTimer: any = null;
 
+    let pendingPriceZoomDelta = 0;
+    let priceZoomRafId: number | null = null;
+
     const tickFrame = () => {
       forceUpdate();
       rafId = requestAnimationFrame(tickFrame);
@@ -234,6 +243,59 @@ export const TradingViewChart: React.FC = () => {
         cancelAnimationFrame(rafId);
         rafId = null;
       }
+    };
+
+    const processSmoothPriceZoom = () => {
+      const container = containerRef.current;
+      if (!container || !candleSeries) {
+        priceZoomRafId = null;
+        return;
+      }
+
+      if (Math.abs(pendingPriceZoomDelta) < 0.1) {
+        pendingPriceZoomDelta = 0;
+        priceZoomRafId = null;
+        return;
+      }
+
+      // Smoothly consume a portion of pending delta per frame (smooth ease-out damping)
+      const step = pendingPriceZoomDelta * 0.22;
+      pendingPriceZoomDelta -= step;
+
+      const rightScale = chart.priceScale('right');
+      const currentRange = rightScale.getVisibleRange();
+
+      let minPrice = currentRange ? currentRange.from : null;
+      let maxPrice = currentRange ? currentRange.to : null;
+
+      if (minPrice === null || maxPrice === null || isNaN(minPrice) || isNaN(maxPrice)) {
+        const timeScaleHeight = 28;
+        const topPrice = candleSeries.coordinateToPrice(0);
+        const bottomPrice = candleSeries.coordinateToPrice(container.clientHeight - timeScaleHeight);
+        if (topPrice !== null && bottomPrice !== null) {
+          minPrice = Math.min(topPrice, bottomPrice);
+          maxPrice = Math.max(topPrice, bottomPrice);
+        }
+      }
+
+      if (minPrice !== null && maxPrice !== null && maxPrice > minPrice) {
+        // Gentle exponential factor (~3.5% zoom per standard 100px wheel tick)
+        const factor = Math.exp(step * 0.00035);
+
+        // Center smoothly around midpoint for balanced, predictable expansion
+        const centerPrice = (minPrice + maxPrice) / 2;
+
+        const newMin = centerPrice - (centerPrice - minPrice) * factor;
+        const newMax = centerPrice + (maxPrice - centerPrice) * factor;
+
+        if (newMax > newMin && newMin > 0) {
+          rightScale.setAutoScale(false);
+          rightScale.setVisibleRange({ from: newMin, to: newMax });
+          forceUpdate();
+        }
+      }
+
+      priceZoomRafId = requestAnimationFrame(processSmoothPriceZoom);
     };
 
     const handleMouseDown = () => {
@@ -269,40 +331,19 @@ export const TradingViewChart: React.FC = () => {
           e.stopPropagation();
           e.stopImmediatePropagation();
 
-          const rightScale = chart.priceScale('right');
-          const currentRange = rightScale.getVisibleRange();
-
-          let minPrice = currentRange ? currentRange.from : null;
-          let maxPrice = currentRange ? currentRange.to : null;
-
-          if (minPrice === null || maxPrice === null || isNaN(minPrice) || isNaN(maxPrice)) {
-            const topPrice = candleSeries.coordinateToPrice(0);
-            const bottomPrice = candleSeries.coordinateToPrice(rect.height - timeScaleHeight);
-            if (topPrice !== null && bottomPrice !== null) {
-              minPrice = Math.min(topPrice, bottomPrice);
-              maxPrice = Math.max(topPrice, bottomPrice);
-            }
+          let delta = e.deltaY;
+          if (e.deltaMode === 1) {
+            delta *= 28; // lines
+          } else if (e.deltaMode === 2) {
+            delta *= 80; // pages
           }
 
-          if (minPrice !== null && maxPrice !== null && maxPrice > minPrice) {
-            const delta = e.deltaY;
-            // Exponential zoom factor (vertical only)
-            const factor = Math.exp(delta * 0.0016);
+          // Clamp single wheel event to prevent huge jerks
+          const clamped = Math.max(-120, Math.min(120, delta));
+          pendingPriceZoomDelta = Math.max(-280, Math.min(280, pendingPriceZoomDelta + clamped));
 
-            const mouseY = e.clientY - rect.top;
-            const cursorPrice = candleSeries.coordinateToPrice(mouseY);
-            const centerPrice = cursorPrice !== null && cursorPrice >= minPrice && cursorPrice <= maxPrice
-              ? cursorPrice
-              : (minPrice + maxPrice) / 2;
-
-            const newMin = centerPrice - (centerPrice - minPrice) * factor;
-            const newMax = centerPrice + (maxPrice - centerPrice) * factor;
-
-            if (newMax > newMin && newMin > 0) {
-              rightScale.setAutoScale(false);
-              rightScale.setVisibleRange({ from: newMin, to: newMax });
-              forceUpdate();
-            }
+          if (priceZoomRafId === null) {
+            priceZoomRafId = requestAnimationFrame(processSmoothPriceZoom);
           }
         }
       }
@@ -348,6 +389,7 @@ export const TradingViewChart: React.FC = () => {
     return () => {
       stopActiveSync();
       if (wheelTimer) clearTimeout(wheelTimer);
+      if (priceZoomRafId !== null) cancelAnimationFrame(priceZoomRafId);
       if (containerEl) {
         containerEl.removeEventListener('mousedown', handleMouseDown);
         window.removeEventListener('mouseup', handleMouseUp);
@@ -469,6 +511,30 @@ export const TradingViewChart: React.FC = () => {
 
     forceUpdate();
   }, [visibleCandles, showVolume, candleColors.volumeUpColor, candleColors.volumeDownColor]);
+
+  // Viewport Focus: ONLY scrolls to real-time / cut candle on initial mount or explicit jump (NOT during step/play)
+  const lastTriggerRef = useRef(viewportFocusTrigger);
+  const hasInitiallyScrolledRef = useRef(false);
+
+  useEffect(() => {
+    if (!chartRef.current || visibleCandles.length === 0) return;
+
+    if (!hasInitiallyScrolledRef.current) {
+      hasInitiallyScrolledRef.current = true;
+      lastTriggerRef.current = viewportFocusTrigger;
+      requestAnimationFrame(() => {
+        chartRef.current?.timeScale().scrollToPosition(0, false);
+      });
+      return;
+    }
+
+    if (viewportFocusTrigger !== lastTriggerRef.current) {
+      lastTriggerRef.current = viewportFocusTrigger;
+      requestAnimationFrame(() => {
+        chartRef.current?.timeScale().scrollToPosition(0, false);
+      });
+    }
+  }, [viewportFocusTrigger, visibleCandles.length]);
 
   // Combined Markers Effect: Williams Fractals + Custom Script Markers
   useEffect(() => {
@@ -954,9 +1020,16 @@ export const TradingViewChart: React.FC = () => {
             <span className="w-1.5 h-1.5 rounded-full bg-tv-blue animate-pulse" />
             <span className="text-tv-blue font-semibold font-sans">Сессии: Вкл</span>
             <button
+              onClick={() => setIsSessionSettingsOpen(true)}
+              title="Настройки индикатора сессий (Стиль, диапазоны, цвета)"
+              className="p-0.5 text-tv-textMuted hover:text-white rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+            >
+              <Settings className="w-3 h-3" />
+            </button>
+            <button
               onClick={() => toggleSessions()}
               title="Выключить отображение сессий"
-              className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+              className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer"
             >
               <X className="w-3 h-3" />
             </button>
@@ -1259,6 +1332,12 @@ export const TradingViewChart: React.FC = () => {
         containerRef={containerRef}
       />
 
+      {/* Market Sessions Settings Modal */}
+      <SessionSettingsModal
+        isOpen={isSessionSettingsOpen}
+        onClose={() => setIsSessionSettingsOpen(false)}
+      />
+
       {/* Custom Script Zones / Imbalances Layer */}
       <ScriptOverlayLayer
         chart={chartInstance}
@@ -1272,6 +1351,16 @@ export const TradingViewChart: React.FC = () => {
         candleSeries={candleSeriesInstance}
         containerRef={containerRef}
       />
+
+      {/* Economic News Calendar Markers Layer */}
+      <NewsLayer
+        timeToCoordinate={(time: number) => {
+          if (!chartInstance) return null;
+          return chartInstance.timeScale().timeToCoordinate(time as any);
+        }}
+        chartWidth={containerRef.current?.clientWidth || 800}
+      />
     </div>
   );
 };
+

@@ -3,7 +3,13 @@ import { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { useChart } from '../../context/ChartContext';
 import { Candle, DrawingObject, DrawingPoint } from '../../types/chart';
 import { formatPrice } from '../../utils/formatters';
-import { Trash2, Copy, Check, X } from 'lucide-react';
+import { Trash2, Copy, Check, X, Settings, Bookmark, Lock, Unlock } from 'lucide-react';
+import { DrawingSettingsModal } from './DrawingSettingsModal';
+import {
+  loadStoredDrawingDefaults,
+  loadStoredDrawingTemplates,
+  DEFAULT_DRAWING_SETTINGS,
+} from '../../services/storage';
 
 interface DrawingLayerProps {
   chart: IChartApi | null;
@@ -151,9 +157,15 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     timeframe,
     registerViewportCenterGetter,
     magnetMode,
+    symbolInfo,
   } = useChart();
 
   const [dragState, setDragState] = useState<DragState | null>(null);
+
+  // Settings modal & templates state
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [modalDrawing, setModalDrawing] = useState<DrawingObject | null>(null);
+  const [isTemplateMenuOpen, setIsTemplateMenuOpen] = useState(false);
 
   // Temporary points while initially creating a drawing
   const [startPoint, setStartPoint] = useState<DrawingPoint | null>(null);
@@ -224,22 +236,50 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     };
   }, [chart, candleSeries, containerRef, visibleCandles, timeframe, registerViewportCenterGetter]);
 
-  // Click on empty chart to deselect active drawing (guarded so it NEVER deselects when interacting with a drawing or toolbar!)
+  const toolbarRef = useRef<HTMLDivElement>(null);
+
+  // Click anywhere outside to deselect active drawing (TradingView standard behavior)
   useEffect(() => {
-    if (!chart) return;
-    const handleClick = () => {
-      if (preventDeselectRef.current || wasDraggingRef.current) {
+    if (!selectedDrawingId) return;
+
+    const handleGlobalPointerDown = (e: MouseEvent) => {
+      // Don't deselect if settings modal is open
+      if (isSettingsModalOpen) return;
+
+      const target = e.target as HTMLElement | SVGElement | null;
+      if (!target) return;
+
+      // Clicked inside the floating toolbar -> keep selected
+      if (toolbarRef.current && toolbarRef.current.contains(target as Node)) {
         return;
       }
-      if (activeTool === 'cursor') {
-        setSelectedDrawingId(null);
+
+      // Clicked on a drawing SVG shape or its resize handle -> keep selected
+      if (target.closest('.tv-drawing-element') || target.closest('.tv-drawing-handle')) {
+        return;
       }
+
+      // Clicked inside any modal, popup or dialog -> keep selected
+      if (target.closest('.tv-modal-content') || target.closest('[role="dialog"]')) {
+        return;
+      }
+
+      // If actively dragging or creating -> keep selected
+      if (dragState || isMouseDownForCreationRef.current) {
+        return;
+      }
+
+      // The user clicked outside: empty chart canvas, candles, axes, or background:
+      // Deselect immediately!
+      setSelectedDrawingId(null);
+      setIsTemplateMenuOpen(false);
     };
-    chart.subscribeClick(handleClick);
+
+    window.addEventListener('mousedown', handleGlobalPointerDown);
     return () => {
-      chart.unsubscribeClick(handleClick);
+      window.removeEventListener('mousedown', handleGlobalPointerDown);
     };
-  }, [chart, activeTool, setSelectedDrawingId]);
+  }, [selectedDrawingId, isSettingsModalOpen, dragState, setSelectedDrawingId]);
 
   // Continuous 60 FPS synchronization during user interactions (zooming wheel, dragging canvas, dragging price/time axes)
   useEffect(() => {
@@ -439,43 +479,65 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     (p1: DrawingPoint, p2: DrawingPoint) => {
       preventDeselectRef.current = true;
       const newId = `${activeTool}_${Date.now()}`;
+      const defaults = loadStoredDrawingDefaults();
+      const toolDefaults = defaults[activeTool] || DEFAULT_DRAWING_SETTINGS[activeTool] || {};
+      const baseColor = toolDefaults.color || (activeTool === 'horizontal' ? '#f7a600' : '#2962ff');
+      const fillCol = toolDefaults.fillColor || baseColor;
+      const fillOp = toolDefaults.fillOpacity ?? 0.15;
+      const rgba = hexOrRgbToRgba(fillCol, fillOp);
 
       if (activeTool === 'horizontal') {
         addDrawing({
           id: newId,
           type: 'horizontal',
           points: [p1],
-          color: '#f7a600',
-          lineWidth: 2,
+          color: baseColor,
+          lineWidth: toolDefaults.lineWidth || 1,
+          lineStyle: toolDefaults.lineStyle || 'dashed',
+          text: toolDefaults.text || '',
         });
       } else if (activeTool === 'rectangle') {
         addDrawing({
           id: newId,
           type: 'rectangle',
           points: [p1, p2],
-          color: '#2962ff',
-          fillColor: 'rgba(41, 98, 255, 0.22)',
-          fillOpacity: 0.22,
-          lineWidth: 2,
-          lineStyle: 'solid',
+          color: baseColor,
+          fillColor: rgba,
+          fillOpacity: fillOp,
+          borderVisible: toolDefaults.borderVisible ?? true,
+          fillVisible: toolDefaults.fillVisible ?? true,
+          lineWidth: toolDefaults.lineWidth || 1,
+          lineStyle: toolDefaults.lineStyle || 'solid',
+          extendRight: toolDefaults.extendRight ?? false,
+          extendLeft: toolDefaults.extendLeft ?? false,
+          text: toolDefaults.text || '',
+          textColor: toolDefaults.textColor || '#d1d4dc',
+          fontSize: toolDefaults.fontSize || 12,
+          textVAlign: toolDefaults.textVAlign || 'top',
+          textHAlign: toolDefaults.textHAlign || 'left',
         });
       } else if (activeTool === 'trendline') {
         addDrawing({
           id: newId,
           type: 'trendline',
           points: [p1, p2],
-          color: '#089981',
-          lineWidth: 2,
-          extendRight: false,
+          color: baseColor,
+          lineWidth: toolDefaults.lineWidth || 2,
+          lineStyle: toolDefaults.lineStyle || 'solid',
+          extendRight: toolDefaults.extendRight ?? false,
+          extendLeft: toolDefaults.extendLeft ?? false,
+          text: toolDefaults.text || '',
         });
       } else if (activeTool === 'ray') {
         addDrawing({
           id: newId,
           type: 'ray',
           points: [p1, p2],
-          color: '#2962ff',
-          lineWidth: 2,
+          color: baseColor,
+          lineWidth: toolDefaults.lineWidth || 2,
+          lineStyle: toolDefaults.lineStyle || 'solid',
           extendRight: true,
+          text: toolDefaults.text || '',
         });
       }
 
@@ -880,42 +942,94 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
               return null;
             }
 
-            const left = Math.min(p1.x, p2.x);
-            const right = Math.max(p1.x, p2.x);
+            const baseLeft = Math.min(p1.x, p2.x);
+            const baseRight = Math.max(p1.x, p2.x);
             const top = Math.min(p1.y, p2.y);
             const bottom = Math.max(p1.y, p2.y);
-            const midX = (left + right) / 2;
+            const containerW = containerRef.current?.clientWidth || 1000;
+
+            const left = drawing.extendLeft ? -10 : baseLeft;
+            const right = drawing.extendRight ? containerW + 10 : baseRight;
+            const midX = (baseLeft + baseRight) / 2;
             const midY = (top + bottom) / 2;
             const width = Math.max(4, right - left);
             const height = Math.max(4, bottom - top);
 
+            const fillColor = drawing.fillVisible !== false
+              ? (drawing.fillColor || hexOrRgbToRgba(drawing.color || '#2962ff', drawing.fillOpacity ?? 0.15))
+              : 'transparent';
+            const strokeColor = drawing.borderVisible !== false
+              ? (drawing.color || '#2962ff')
+              : 'transparent';
+            const strokeDash =
+              drawing.lineStyle === 'dashed' ? '6 4' : drawing.lineStyle === 'dotted' ? '2 2' : undefined;
+
             return (
               <g key={drawing.id} className="select-none">
-                {/* Rectangle Body (Click to select, drag to translate) */}
+                {/* Rectangle Body (Click to select, double-click for settings, drag to translate) */}
                 <rect
                   x={left}
                   y={top}
                   width={width}
                   height={height}
-                  fill={drawing.fillColor || 'rgba(41, 98, 255, 0.22)'}
+                  fill={fillColor}
                   pointerEvents="all"
-                  stroke={drawing.color || '#2962ff'}
-                  strokeWidth={drawing.lineWidth || 2}
-                  strokeDasharray={drawing.lineStyle === 'dashed' ? '6 3' : undefined}
+                  stroke={strokeColor}
+                  strokeWidth={drawing.lineWidth || 1}
+                  strokeDasharray={strokeDash}
                   onMouseDown={(e) => {
+                    if (drawing.isLocked) return;
                     e.stopPropagation();
                     preventDeselectRef.current = true;
                     handleStartDrag(e, drawing.id, 'move');
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    preventDeselectRef.current = true;
                     setSelectedDrawingId(drawing.id);
                   }}
-                  className={`pointer-events-auto transition-colors ${
-                    isSelected ? 'cursor-move' : 'cursor-pointer hover:opacity-90'
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setModalDrawing(drawing);
+                    setIsSettingsModalOpen(true);
+                  }}
+                  className={`tv-drawing-element pointer-events-auto transition-colors ${
+                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-move') : 'cursor-pointer hover:opacity-90'
                   }`}
                 />
+
+                {/* Optional Text Annotation inside / on the Rectangle */}
+                {drawing.text && (
+                  <text
+                    x={
+                      drawing.textHAlign === 'center'
+                        ? (left + right) / 2
+                        : drawing.textHAlign === 'right'
+                        ? right - 8
+                        : left + 8
+                    }
+                    y={
+                      drawing.textVAlign === 'middle'
+                        ? (top + bottom) / 2 + (drawing.fontSize || 12) / 3
+                        : drawing.textVAlign === 'bottom'
+                        ? bottom - 8
+                        : top + (drawing.fontSize || 12) + 4
+                    }
+                    textAnchor={
+                      drawing.textHAlign === 'center'
+                        ? 'middle'
+                        : drawing.textHAlign === 'right'
+                        ? 'end'
+                        : 'start'
+                    }
+                    fill={drawing.textColor || '#d1d4dc'}
+                    fontSize={drawing.fontSize || 12}
+                    fontFamily="sans-serif"
+                    fontWeight="bold"
+                    className="select-none pointer-events-none"
+                  >
+                    {drawing.text}
+                  </text>
+                )}
 
                 {/* Selected Bounding Indicator */}
                 {isSelected && (
@@ -938,7 +1052,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     {/* 1. Top-Left */}
                     <g
                       onMouseDown={(e) => handleStartDrag(e, drawing.id, 'rect_nw')}
-                      className="cursor-nwse-resize pointer-events-auto"
+                      className="tv-drawing-handle cursor-nwse-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения размера (NW)</title>
                       <circle cx={left} cy={top} r="14" fill="transparent" pointerEvents="all" />
@@ -948,7 +1062,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     {/* 2. Top-Center */}
                     <g
                       onMouseDown={(e) => handleStartDrag(e, drawing.id, 'rect_n')}
-                      className="cursor-ns-resize pointer-events-auto"
+                      className="tv-drawing-handle cursor-ns-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения высоты (N)</title>
                       <circle cx={midX} cy={top} r="14" fill="transparent" pointerEvents="all" />
@@ -958,7 +1072,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     {/* 3. Top-Right */}
                     <g
                       onMouseDown={(e) => handleStartDrag(e, drawing.id, 'rect_ne')}
-                      className="cursor-nesw-resize pointer-events-auto"
+                      className="tv-drawing-handle cursor-nesw-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения размера (NE)</title>
                       <circle cx={right} cy={top} r="14" fill="transparent" pointerEvents="all" />
@@ -968,7 +1082,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     {/* 4. Middle-Right */}
                     <g
                       onMouseDown={(e) => handleStartDrag(e, drawing.id, 'rect_e')}
-                      className="cursor-ew-resize pointer-events-auto"
+                      className="tv-drawing-handle cursor-ew-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения ширины (E)</title>
                       <circle cx={right} cy={midY} r="14" fill="transparent" pointerEvents="all" />
@@ -978,7 +1092,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     {/* 5. Bottom-Right */}
                     <g
                       onMouseDown={(e) => handleStartDrag(e, drawing.id, 'rect_se')}
-                      className="cursor-nwse-resize pointer-events-auto"
+                      className="tv-drawing-handle cursor-nwse-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения размера (SE)</title>
                       <circle cx={right} cy={bottom} r="14" fill="transparent" pointerEvents="all" />
@@ -988,7 +1102,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     {/* 6. Bottom-Center */}
                     <g
                       onMouseDown={(e) => handleStartDrag(e, drawing.id, 'rect_s')}
-                      className="cursor-ns-resize pointer-events-auto"
+                      className="tv-drawing-handle cursor-ns-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения высоты (S)</title>
                       <circle cx={midX} cy={bottom} r="14" fill="transparent" pointerEvents="all" />
@@ -998,7 +1112,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     {/* 7. Bottom-Left */}
                     <g
                       onMouseDown={(e) => handleStartDrag(e, drawing.id, 'rect_sw')}
-                      className="cursor-nesw-resize pointer-events-auto"
+                      className="tv-drawing-handle cursor-nesw-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения размера (SW)</title>
                       <circle cx={left} cy={bottom} r="14" fill="transparent" pointerEvents="all" />
@@ -1008,7 +1122,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     {/* 8. Middle-Left */}
                     <g
                       onMouseDown={(e) => handleStartDrag(e, drawing.id, 'rect_w')}
-                      className="cursor-ew-resize pointer-events-auto"
+                      className="tv-drawing-handle cursor-ew-resize pointer-events-auto"
                     >
                       <title>Тяните для изменения ширины (W)</title>
                       <circle cx={left} cy={midY} r="14" fill="transparent" pointerEvents="all" />
@@ -1046,7 +1160,13 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     preventDeselectRef.current = true;
                     setSelectedDrawingId(drawing.id);
                   }}
-                  className="cursor-ns-resize pointer-events-auto"
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    setModalDrawing(drawing);
+                    setIsSettingsModalOpen(true);
+                  }}
+                  className="tv-drawing-element cursor-ns-resize pointer-events-auto"
                 />
                 {/* Visible Line */}
                 <line
@@ -1072,7 +1192,13 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     preventDeselectRef.current = true;
                     setSelectedDrawingId(drawing.id);
                   }}
-                  className="cursor-ns-resize pointer-events-auto"
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    setModalDrawing(drawing);
+                    setIsSettingsModalOpen(true);
+                  }}
+                  className="tv-drawing-element tv-drawing-handle cursor-ns-resize pointer-events-auto"
                   transform={`translate(60, ${p.y - 10})`}
                 >
                   <rect
@@ -1153,7 +1279,13 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     preventDeselectRef.current = true;
                     setSelectedDrawingId(drawing.id);
                   }}
-                  className="cursor-move pointer-events-auto"
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    preventDeselectRef.current = true;
+                    setModalDrawing(drawing);
+                    setIsSettingsModalOpen(true);
+                  }}
+                  className="tv-drawing-element cursor-move pointer-events-auto"
                 />
                 {/* Visible Line / Ray */}
                 <line
@@ -1170,7 +1302,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                 {/* Point 1 Handle (Начало) */}
                 <g
                   onMouseDown={(e) => handleStartDrag(e, drawing.id, 'line_p1')}
-                  className="cursor-pointer pointer-events-auto"
+                  className="tv-drawing-handle cursor-pointer pointer-events-auto"
                 >
                   <title>Начало {isRay ? 'луча' : 'линии'} (зажмите и тяните)</title>
                   <circle cx={p1.x} cy={p1.y} r="14" fill="transparent" pointerEvents="all" />
@@ -1187,7 +1319,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                 {/* Point 2 Handle (Конец / Направление) */}
                 <g
                   onMouseDown={(e) => handleStartDrag(e, drawing.id, 'line_p2')}
-                  className="cursor-pointer pointer-events-auto"
+                  className="tv-drawing-handle cursor-pointer pointer-events-auto"
                 >
                   <title>{isRay ? 'Вторая точка / направление луча' : 'Конец линии'} (зажмите и тяните)</title>
                   <circle cx={p2.x} cy={p2.y} r="14" fill="transparent" pointerEvents="all" />
@@ -1351,18 +1483,17 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
       {/* ========================================================================= */}
       {selectedDrawing && selectedToolbarPos && (
         <div
+          ref={toolbarRef}
           style={{
             left: `${selectedToolbarPos.x}px`,
             top: `${selectedToolbarPos.y}px`,
           }}
-          className="absolute pointer-events-auto z-40 bg-[#1e222d]/95 backdrop-blur-md border border-[#2a2e39] rounded-xl shadow-2xl p-1.5 flex items-center gap-2 select-none"
+          className="tv-floating-toolbar absolute pointer-events-auto z-40 bg-[#1e222d]/95 backdrop-blur-md border border-[#2a2e39] rounded-xl shadow-2xl p-1.5 flex items-center gap-2 select-none"
           onMouseDown={(e) => {
             e.stopPropagation();
-            preventDeselectRef.current = true;
           }}
           onClick={(e) => {
             e.stopPropagation();
-            preventDeselectRef.current = true;
           }}
         >
           {/* Color Palette Dots */}
@@ -1453,6 +1584,25 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
             {selectedDrawing.lineStyle === 'dashed' ? 'Пунктир' : 'Сплошная'}
           </button>
 
+          {/* Extend Right toggle for Rectangle */}
+          {selectedDrawing.type === 'rectangle' && (
+            <button
+              onClick={() =>
+                updateDrawing(selectedDrawing.id, {
+                  extendRight: !selectedDrawing.extendRight,
+                })
+              }
+              className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+                selectedDrawing.extendRight
+                  ? 'border-tv-blue bg-tv-blue/20 text-tv-blue font-medium'
+                  : 'border-[#2a2e39] text-tv-textMuted hover:text-white'
+              }`}
+              title="Продлить прямоугольник вправо"
+            >
+              {selectedDrawing.extendRight ? 'Продлен ➔' : 'Вправо ➔'}
+            </button>
+          )}
+
           {/* Toggle Ray / Segment for lines and rays */}
           {(selectedDrawing.type === 'trendline' || selectedDrawing.type === 'ray') && (
             <button
@@ -1473,6 +1623,87 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
               {selectedDrawing.type === 'ray' || selectedDrawing.extendRight ? 'Луч ➔' : 'Отрезок'}
             </button>
           )}
+
+          {/* Templates Dropdown Button */}
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsTemplateMenuOpen(!isTemplateMenuOpen);
+              }}
+              title="Шаблоны оформления (Presets)"
+              className={`p-1.5 rounded-lg transition-colors flex items-center gap-1 ${
+                isTemplateMenuOpen
+                  ? 'bg-tv-blue/20 text-tv-blue'
+                  : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+              }`}
+            >
+              <Bookmark className="w-3.5 h-3.5" />
+            </button>
+            {isTemplateMenuOpen && (
+              <div
+                className="absolute left-0 bottom-full mb-2 w-48 bg-[#181b24] border border-[#2a2e39] rounded-xl shadow-2xl p-1.5 z-50 space-y-1"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="px-2 py-1 text-[9px] font-semibold uppercase text-tv-textMuted border-b border-[#242731]">
+                  Шаблоны ({selectedDrawing.type === 'rectangle' ? 'Прямоугольник' : 'Фигура'})
+                </div>
+                {loadStoredDrawingTemplates()
+                  .filter((tpl) => tpl.tool === selectedDrawing.type)
+                  .map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      onClick={() => {
+                        updateDrawing(selectedDrawing.id, tpl.settings);
+                        setIsTemplateMenuOpen(false);
+                      }}
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-left hover:bg-[#242731] text-[#d1d4dc] hover:text-white transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-3 h-3 rounded-full border border-white/20"
+                          style={{ backgroundColor: tpl.settings.color || '#2962ff' }}
+                        />
+                        <span>{tpl.name}</span>
+                      </div>
+                    </button>
+                  ))}
+              </div>
+            )}
+          </div>
+
+          {/* Settings Button */}
+          <button
+            onClick={() => {
+              setModalDrawing(selectedDrawing);
+              setIsSettingsModalOpen(true);
+            }}
+            title="Все настройки (Двойной клик)"
+            className="p-1.5 text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover rounded-lg transition-colors"
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Lock / Unlock Toggle Button */}
+          <button
+            onClick={() => {
+              updateDrawing(selectedDrawing.id, {
+                isLocked: !selectedDrawing.isLocked,
+              });
+            }}
+            title={selectedDrawing.isLocked ? 'Разблокировать объект' : 'Заблокировать объект'}
+            className={`p-1.5 rounded-lg transition-colors ${
+              selectedDrawing.isLocked
+                ? 'text-tv-yellow bg-tv-yellow/10'
+                : 'text-tv-textMuted hover:text-white hover:bg-tv-surfaceHover'
+            }`}
+          >
+            {selectedDrawing.isLocked ? (
+              <Lock className="w-3.5 h-3.5" />
+            ) : (
+              <Unlock className="w-3.5 h-3.5" />
+            )}
+          </button>
 
           {/* Duplicate Button */}
           <button
@@ -1507,6 +1738,23 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
+      )}
+
+      {/* Settings Modal */}
+      {isSettingsModalOpen && modalDrawing && (
+        <DrawingSettingsModal
+          isOpen={isSettingsModalOpen}
+          drawing={modalDrawing}
+          onClose={() => {
+            setIsSettingsModalOpen(false);
+            setModalDrawing(null);
+          }}
+          onUpdate={(id, updates) => {
+            updateDrawing(id, updates);
+            setModalDrawing((prev) => (prev && prev.id === id ? { ...prev, ...updates } : prev));
+          }}
+          pricePrecision={symbolInfo?.pricePrecision || 2}
+        />
       )}
     </div>
   );

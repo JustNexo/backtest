@@ -1,4 +1,4 @@
-import { CandleColorSettings, PropFirmFeeSettings, ThemeSettings, MarketSessionsSettings, CustomScript } from '../types/chart';
+import { CandleColorSettings, PropFirmFeeSettings, ThemeSettings, MarketSessionsSettings, CustomScript, DrawingObject, DrawingTemplate } from '../types/chart';
 import { RiskSettings } from '../types/trading';
 import { DEFAULT_PROP_FIRM_SETTINGS } from './tradeEngine';
 
@@ -221,72 +221,96 @@ export function saveStoredSymbol(symbol: string): void {
 
 export const DEFAULT_SESSIONS_SETTINGS: MarketSessionsSettings = {
   enabled: false,
-  showHighLow: true,
+  renderStyle: 'box',      // Sleek bounded Range Box by default
+  showHighLow: false,      // Clean aesthetic matching screenshot
   showLabels: true,
+  showMidline: false,      // 50% Equilibrium line
+  extendHighLow: false,    // Extend lines into future
+  maxDays: 3,              // Render only last 3 days to avoid screen clutter
+  highLowStyle: 'clean',   // Minimalist elegant line styling
   sessions: {
     asia: {
       id: 'asia',
       name: 'Азия (Tokyo)',
+      label: 'Tokyo',
       enabled: true,
       startHour: 0,
       startMinute: 0,
-      endHour: 8,
+      endHour: 9,
       endMinute: 0,
-      color: '#f7a600',
-      bgOpacity: 0.12,
-      showHighLow: true,
+      color: '#e6ca65',
+      bgOpacity: 0.08,
+      showHighLow: false,
       showLabel: true,
     },
     london: {
       id: 'london',
       name: 'Лондон (London)',
+      label: 'London',
       enabled: true,
       startHour: 7,
       startMinute: 0,
       endHour: 16,
       endMinute: 0,
       color: '#2962ff',
-      bgOpacity: 0.12,
-      showHighLow: true,
+      bgOpacity: 0.08,
+      showHighLow: false,
+      showLabel: true,
+    },
+    lunch: {
+      id: 'lunch',
+      name: 'Ланч (Lunch)',
+      label: 'Lunch',
+      enabled: true,
+      startHour: 16,
+      startMinute: 0,
+      endHour: 17,
+      endMinute: 0,
+      color: '#666666',
+      bgOpacity: 0.08,
+      showHighLow: false,
       showLabel: true,
     },
     newyork: {
       id: 'newyork',
-      name: 'Нью-Йорк (New York)',
+      name: 'Нью-Йорк (NY)',
+      label: 'NY',
       enabled: true,
-      startHour: 13,
+      startHour: 12,
       startMinute: 0,
       endHour: 21,
       endMinute: 0,
       color: '#f23645',
-      bgOpacity: 0.12,
-      showHighLow: true,
+      bgOpacity: 0.08,
+      showHighLow: false,
       showLabel: true,
     },
     london_kz: {
       id: 'london_kz',
       name: 'London Open Killzone',
+      label: 'London KZ',
       enabled: false,
       startHour: 7,
       startMinute: 0,
       endHour: 10,
       endMinute: 0,
       color: '#00bcd4',
-      bgOpacity: 0.18,
-      showHighLow: true,
+      bgOpacity: 0.12,
+      showHighLow: false,
       showLabel: true,
     },
     ny_kz: {
       id: 'ny_kz',
       name: 'NY Open Killzone',
+      label: 'NY KZ',
       enabled: false,
       startHour: 12,
       startMinute: 0,
       endHour: 15,
       endMinute: 0,
       color: '#e040fb',
-      bgOpacity: 0.18,
-      showHighLow: true,
+      bgOpacity: 0.12,
+      showHighLow: false,
       showLabel: true,
     },
   },
@@ -296,7 +320,184 @@ const EXTRA_STORAGE_KEYS = {
   SESSIONS_SETTINGS: 'tv_backtest_sessions_settings',
   CUSTOM_SCRIPTS: 'tv_backtest_custom_scripts',
   ACTIVE_SCRIPT_ID: 'tv_backtest_active_script_id',
+  DRAWING_DEFAULTS: 'tv_backtest_drawing_defaults',
+  DRAWING_TEMPLATES: 'tv_backtest_drawing_templates',
 };
+
+export const DEFAULT_DRAWING_SETTINGS: Record<string, Partial<DrawingObject>> = {
+  rectangle: {
+    color: '#2962ff',
+    fillColor: '#2962ff',
+    fillOpacity: 0.15,
+    borderVisible: true,
+    fillVisible: true,
+    lineWidth: 1,
+    lineStyle: 'solid',
+    extendRight: false,
+    extendLeft: false,
+    fontSize: 12,
+    textColor: '#d1d4dc',
+    textVAlign: 'top',
+    textHAlign: 'left',
+  },
+  trendline: {
+    color: '#2962ff',
+    lineWidth: 2,
+    lineStyle: 'solid',
+    extendRight: false,
+    extendLeft: false,
+  },
+  horizontal: {
+    color: '#f7a600',
+    lineWidth: 1,
+    lineStyle: 'dashed',
+  },
+  ray: {
+    color: '#2962ff',
+    lineWidth: 2,
+    lineStyle: 'solid',
+    extendRight: true,
+  },
+  position_long: {
+    color: '#089981',
+    fillColor: '#089981',
+    fillOpacity: 0.2,
+  },
+  position_short: {
+    color: '#f23645',
+    fillColor: '#f23645',
+    fillOpacity: 0.2,
+  },
+};
+
+export const BUILTIN_DRAWING_TEMPLATES: DrawingTemplate[] = [
+  {
+    id: 'tmpl_bull_ob',
+    name: 'Bullish Order Block (+OB)',
+    tool: 'rectangle',
+    settings: {
+      color: '#089981',
+      fillColor: '#089981',
+      fillOpacity: 0.16,
+      borderVisible: true,
+      fillVisible: true,
+      lineWidth: 1,
+      lineStyle: 'solid',
+      extendRight: true,
+      text: '+OB',
+      textColor: '#089981',
+      fontSize: 11,
+      textVAlign: 'top',
+      textHAlign: 'left',
+    },
+  },
+  {
+    id: 'tmpl_bear_ob',
+    name: 'Bearish Order Block (-OB)',
+    tool: 'rectangle',
+    settings: {
+      color: '#f23645',
+      fillColor: '#f23645',
+      fillOpacity: 0.16,
+      borderVisible: true,
+      fillVisible: true,
+      lineWidth: 1,
+      lineStyle: 'solid',
+      extendRight: true,
+      text: '-OB',
+      textColor: '#f23645',
+      fontSize: 11,
+      textVAlign: 'top',
+      textHAlign: 'left',
+    },
+  },
+  {
+    id: 'tmpl_fvg',
+    name: 'Fair Value Gap (FVG)',
+    tool: 'rectangle',
+    settings: {
+      color: '#f7a600',
+      fillColor: '#f7a600',
+      fillOpacity: 0.14,
+      borderVisible: true,
+      fillVisible: true,
+      lineWidth: 1,
+      lineStyle: 'dashed',
+      extendRight: true,
+      text: 'FVG',
+      textColor: '#f7a600',
+      fontSize: 11,
+      textVAlign: 'middle',
+      textHAlign: 'center',
+    },
+  },
+  {
+    id: 'tmpl_liquidity',
+    name: 'Liquidity Pool ($$$)',
+    tool: 'rectangle',
+    settings: {
+      color: '#ab47bc',
+      fillColor: '#ab47bc',
+      fillOpacity: 0.12,
+      borderVisible: true,
+      fillVisible: true,
+      lineWidth: 1,
+      lineStyle: 'dashed',
+      extendRight: true,
+      text: 'BSL / SSL $$$',
+      textColor: '#ab47bc',
+      fontSize: 11,
+      textVAlign: 'top',
+      textHAlign: 'right',
+    },
+  },
+];
+
+export function loadStoredDrawingDefaults(): Record<string, Partial<DrawingObject>> {
+  try {
+    const raw = localStorage.getItem(EXTRA_STORAGE_KEYS.DRAWING_DEFAULTS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...DEFAULT_DRAWING_SETTINGS, ...parsed };
+    }
+  } catch (e) {
+    console.warn('Error reading stored drawing defaults:', e);
+  }
+  return DEFAULT_DRAWING_SETTINGS;
+}
+
+export function saveStoredDrawingDefaults(tool: string, settings: Partial<DrawingObject>): void {
+  try {
+    const current = loadStoredDrawingDefaults();
+    current[tool] = { ...(current[tool] || {}), ...settings };
+    localStorage.setItem(EXTRA_STORAGE_KEYS.DRAWING_DEFAULTS, JSON.stringify(current));
+  } catch (e) {
+    console.warn('Error saving drawing defaults:', e);
+  }
+}
+
+export function loadStoredDrawingTemplates(): DrawingTemplate[] {
+  try {
+    const raw = localStorage.getItem(EXTRA_STORAGE_KEYS.DRAWING_TEMPLATES);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Error reading stored drawing templates:', e);
+  }
+  return BUILTIN_DRAWING_TEMPLATES;
+}
+
+export function saveStoredDrawingTemplates(templates: DrawingTemplate[]): void {
+  try {
+    localStorage.setItem(EXTRA_STORAGE_KEYS.DRAWING_TEMPLATES, JSON.stringify(templates));
+  } catch (e) {
+    console.warn('Error saving drawing templates:', e);
+  }
+}
 
 export function loadStoredSessionsSettings(): MarketSessionsSettings {
   try {

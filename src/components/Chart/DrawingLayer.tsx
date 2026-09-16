@@ -84,6 +84,18 @@ function hexOrRgbToRgba(color: string, opacity: number): string {
   return color;
 }
 
+function distToSegment(
+  p: { x: number; y: number },
+  v: { x: number; y: number },
+  w: { x: number; y: number }
+): number {
+  const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
+  if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
+  let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
+}
+
 function findSnappedOHLC(
   rawTime: number,
   rawPrice: number,
@@ -162,32 +174,8 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
   } = useChart();
 
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const mouseDownCoordRef = useRef<{ x: number; y: number; id: string } | null>(null);
   const preDragSnapshotRef = useRef<DrawingObject[] | null>(null);
   const hasMovedDuringDragRef = useRef<boolean>(false);
-
-  const forwardMouseDownToChart = (e: React.MouseEvent) => {
-    const canvas = containerRef.current?.querySelector('canvas');
-    if (canvas) {
-      const simEvent = new MouseEvent('mousedown', {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        detail: e.detail,
-        screenX: e.screenX,
-        screenY: e.screenY,
-        clientX: e.clientX,
-        clientY: e.clientY,
-        button: e.button,
-        buttons: e.buttons,
-        ctrlKey: e.ctrlKey,
-        metaKey: e.metaKey,
-        shiftKey: e.shiftKey,
-        altKey: e.altKey,
-      });
-      canvas.dispatchEvent(simEvent);
-    }
-  };
 
   // Settings modal & templates state
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -278,6 +266,11 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
 
       // Clicked inside the floating toolbar -> keep selected
       if (toolbarRef.current && toolbarRef.current.contains(target as Node)) {
+        return;
+      }
+
+      // Clicked inside the chart container: let chart.subscribeClick handle drawing selection
+      if (containerRef.current && containerRef.current.contains(target as Node)) {
         return;
       }
 
@@ -582,6 +575,72 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     },
     [activeTool, addDrawing, setActiveTool, setSelectedDrawingId]
   );
+
+  // Native chart canvas click subscriber: select drawing when clicked inside, deselect on blank area
+  useEffect(() => {
+    if (!chart || !candleSeries) return;
+
+    const handleChartClick = (param: any) => {
+      if (activeTool !== 'cursor' || dragState) return;
+      if (!param || !param.point) return;
+
+      const { x, y } = param.point;
+      const containerW = containerRef.current?.clientWidth || 1000;
+
+      for (let i = drawings.length - 1; i >= 0; i--) {
+        const d = drawings[i];
+
+        if (d.type === 'rectangle' && d.points.length >= 2) {
+          const p1 = getCoordinates(d.points[0]);
+          const p2 = getCoordinates(d.points[1]);
+          if (p1.x !== null && p1.y !== null && p2.x !== null && p2.y !== null) {
+            const baseLeft = Math.min(p1.x, p2.x);
+            const baseRight = Math.max(p1.x, p2.x);
+            const top = Math.min(p1.y, p2.y);
+            const bottom = Math.max(p1.y, p2.y);
+            const left = d.extendLeft ? -10 : baseLeft;
+            const right = d.extendRight ? containerW + 10 : baseRight;
+
+            if (x >= left - 4 && x <= right + 4 && y >= top - 4 && y <= bottom + 4) {
+              setSelectedDrawingId(d.id);
+              return;
+            }
+          }
+        }
+
+        if (d.type === 'horizontal' && d.points.length >= 1) {
+          const p = getCoordinates(d.points[0]);
+          if (p.y !== null && Math.abs(y - p.y) <= 12) {
+            setSelectedDrawingId(d.id);
+            return;
+          }
+        }
+
+        if ((d.type === 'trendline' || d.type === 'ray') && d.points.length >= 2) {
+          const p1 = getCoordinates(d.points[0]);
+          const p2 = getCoordinates(d.points[1]);
+          if (p1.x !== null && p1.y !== null && p2.x !== null && p2.y !== null) {
+            const dist = distToSegment({ x, y }, { x: p1.x, y: p1.y }, { x: p2.x, y: p2.y });
+            if (dist <= 12) {
+              setSelectedDrawingId(d.id);
+              return;
+            }
+          }
+        }
+      }
+
+      // Click landed on blank chart area: deselect active drawing
+      setSelectedDrawingId(null);
+      setIsTemplateMenuOpen(false);
+    };
+
+    chart.subscribeClick(handleChartClick);
+    return () => {
+      try {
+        chart.unsubscribeClick(handleChartClick);
+      } catch (e) {}
+    };
+  }, [chart, candleSeries, drawings, activeTool, dragState, containerRef, getCoordinates, setSelectedDrawingId]);
 
   const handleMouseDownCreation = (e: React.MouseEvent) => {
     if (activeTool === 'cursor') return;
@@ -1003,38 +1062,52 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
 
             return (
               <g key={drawing.id} className="select-none">
-                {/* Rectangle Body (Click to select, double-click for settings, drag to translate) */}
+                {/* 1. Translucent Fill: NEVER blocks mouse events, 100% chart pan pass-through */}
                 <rect
                   x={left}
                   y={top}
                   width={width}
                   height={height}
                   fill={fillColor}
-                  pointerEvents="all"
+                  stroke="none"
+                  pointerEvents="none"
+                  className="pointer-events-none select-none"
+                />
+
+                {/* 2. Visual Border: crisp stroke */}
+                <rect
+                  x={left}
+                  y={top}
+                  width={width}
+                  height={height}
+                  fill="none"
                   stroke={strokeColor}
                   strokeWidth={drawing.lineWidth || 1}
                   strokeDasharray={strokeDash}
+                  pointerEvents="none"
+                  className="pointer-events-none select-none"
+                />
+
+                {/* 3. Border Hit-Zone (14px stroke boundary): Click border to select, drag border to move */}
+                <rect
+                  x={left}
+                  y={top}
+                  width={width}
+                  height={height}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={Math.max(14, (drawing.lineWidth || 1) + 12)}
+                  pointerEvents="stroke"
                   onMouseDown={(e) => {
                     if (isSelected && !drawing.isLocked) {
                       e.stopPropagation();
                       preventDeselectRef.current = true;
                       handleStartDrag(e, drawing.id, 'move');
-                    } else {
-                      mouseDownCoordRef.current = { x: e.clientX, y: e.clientY, id: drawing.id };
-                      forwardMouseDownToChart(e);
                     }
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    const start = mouseDownCoordRef.current;
-                    if (start && start.id === drawing.id) {
-                      const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
-                      if (dist < 6) {
-                        setSelectedDrawingId(drawing.id);
-                      }
-                    } else {
-                      setSelectedDrawingId(drawing.id);
-                    }
+                    setSelectedDrawingId(drawing.id);
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
@@ -1042,10 +1115,43 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     setModalDrawing(drawing);
                     setIsSettingsModalOpen(true);
                   }}
-                  className={`tv-drawing-element pointer-events-auto transition-colors ${
-                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-move') : 'cursor-pointer hover:opacity-95'
+                  className={`tv-drawing-element pointer-events-auto ${
+                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-move') : 'cursor-pointer'
                   }`}
                 />
+
+                {/* 4. Center Move Anchor: Sleek TradingView handle visible when selected */}
+                {isSelected && !drawing.isLocked && width > 40 && height > 30 && (
+                  <g
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      preventDeselectRef.current = true;
+                      handleStartDrag(e, drawing.id, 'move');
+                    }}
+                    className="tv-drawing-handle cursor-move pointer-events-auto select-none"
+                    transform={`translate(${midX - 14}, ${midY - 14})`}
+                  >
+                    <title>Зажмите и тяните для перемещения фигуры</title>
+                    <rect
+                      x="0"
+                      y="0"
+                      width="28"
+                      height="28"
+                      rx="7"
+                      fill="#1e222d"
+                      stroke={drawing.color || '#2962ff'}
+                      strokeWidth="1.5"
+                      className="shadow-xl"
+                    />
+                    <path
+                      d="M14 6v16m-8-8h16M14 6l-2.5 2.5m2.5-2.5l2.5 2.5M14 22l-2.5-2.5m2.5 2.5l2.5-2.5M6 14l2.5-2.5M6 14l2.5 2.5M22 14l-2.5-2.5M22 14l2.5 2.5"
+                      stroke={drawing.color || '#2962ff'}
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </g>
+                )}
 
                 {/* Optional Text Annotation inside / on the Rectangle */}
                 {drawing.text && (
@@ -1191,7 +1297,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
 
             return (
               <g key={drawing.id} className="select-none">
-                {/* Wider invisible stroke for easy grabbing */}
+                {/* Wider invisible stroke for easy grabbing when selected */}
                 <line
                   x1="0"
                   y1={p.y}
@@ -1199,27 +1305,12 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   y2={p.y}
                   stroke="transparent"
                   strokeWidth="14"
-                  pointerEvents="all"
+                  pointerEvents={isSelected ? 'stroke' : 'none'}
                   onMouseDown={(e) => {
                     if (isSelected && !drawing.isLocked) {
                       e.stopPropagation();
                       preventDeselectRef.current = true;
                       handleStartDrag(e, drawing.id, 'horz_price');
-                    } else {
-                      mouseDownCoordRef.current = { x: e.clientX, y: e.clientY, id: drawing.id };
-                      forwardMouseDownToChart(e);
-                    }
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const start = mouseDownCoordRef.current;
-                    if (start && start.id === drawing.id) {
-                      const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
-                      if (dist < 6) {
-                        setSelectedDrawingId(drawing.id);
-                      }
-                    } else {
-                      setSelectedDrawingId(drawing.id);
                     }
                   }}
                   onDoubleClick={(e) => {
@@ -1228,8 +1319,8 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     setModalDrawing(drawing);
                     setIsSettingsModalOpen(true);
                   }}
-                  className={`tv-drawing-element pointer-events-auto ${
-                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-ns-resize') : 'cursor-pointer'
+                  className={`tv-drawing-element ${
+                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-ns-resize pointer-events-auto') : 'pointer-events-none'
                   }`}
                 />
                 {/* Visible Line */}
@@ -1244,29 +1335,18 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   className="pointer-events-none"
                 />
 
-                {/* Level badge */}
+                {/* Level badge: Click to select, drag when selected */}
                 <g
                   onMouseDown={(e) => {
                     if (isSelected && !drawing.isLocked) {
                       e.stopPropagation();
                       preventDeselectRef.current = true;
                       handleStartDrag(e, drawing.id, 'horz_price');
-                    } else {
-                      mouseDownCoordRef.current = { x: e.clientX, y: e.clientY, id: drawing.id };
-                      forwardMouseDownToChart(e);
                     }
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    const start = mouseDownCoordRef.current;
-                    if (start && start.id === drawing.id) {
-                      const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
-                      if (dist < 6) {
-                        setSelectedDrawingId(drawing.id);
-                      }
-                    } else {
-                      setSelectedDrawingId(drawing.id);
-                    }
+                    setSelectedDrawingId(drawing.id);
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
@@ -1274,7 +1354,9 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     setModalDrawing(drawing);
                     setIsSettingsModalOpen(true);
                   }}
-                  className="tv-drawing-element tv-drawing-handle cursor-pointer pointer-events-auto"
+                  className={`tv-drawing-element tv-drawing-handle pointer-events-auto ${
+                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-ns-resize') : 'cursor-pointer'
+                  }`}
                   transform={`translate(60, ${p.y - 10})`}
                 >
                   <rect
@@ -1344,27 +1426,12 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                   y2={lineY2}
                   stroke="transparent"
                   strokeWidth="16"
-                  pointerEvents="all"
+                  pointerEvents={isSelected ? 'stroke' : 'none'}
                   onMouseDown={(e) => {
                     if (isSelected && !drawing.isLocked) {
                       e.stopPropagation();
                       preventDeselectRef.current = true;
                       handleStartDrag(e, drawing.id, 'move');
-                    } else {
-                      mouseDownCoordRef.current = { x: e.clientX, y: e.clientY, id: drawing.id };
-                      forwardMouseDownToChart(e);
-                    }
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const start = mouseDownCoordRef.current;
-                    if (start && start.id === drawing.id) {
-                      const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
-                      if (dist < 6) {
-                        setSelectedDrawingId(drawing.id);
-                      }
-                    } else {
-                      setSelectedDrawingId(drawing.id);
                     }
                   }}
                   onDoubleClick={(e) => {
@@ -1373,8 +1440,8 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
                     setModalDrawing(drawing);
                     setIsSettingsModalOpen(true);
                   }}
-                  className={`tv-drawing-element pointer-events-auto ${
-                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-move') : 'cursor-pointer'
+                  className={`tv-drawing-element ${
+                    isSelected ? (drawing.isLocked ? 'cursor-pointer' : 'cursor-move pointer-events-auto') : 'pointer-events-none'
                   }`}
                 />
                 {/* Visible Line / Ray */}

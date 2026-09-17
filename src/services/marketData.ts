@@ -87,7 +87,7 @@ const realIntradayCache: Record<string, Candle[]> = {};
 
 export async function loadRealIntradayData(
   symbol: string,
-  timeframe: '5m' | '15m',
+  timeframe: '1m' | '5m' | '15m',
   year: number
 ): Promise<Candle[]> {
   const norm = symbol.replace('.P', '');
@@ -488,7 +488,27 @@ export async function getCandlesForTimeframe(
       }
     }
 
-    if (timeframe === '1m' || timeframe === '3m') {
+    if (timeframe === '1m') {
+      const real1m = await loadRealIntradayData(symbol, '1m', targetYear);
+      if (real1m && real1m.length > 0) {
+        memoryCache[cacheKey] = real1m;
+        return real1m;
+      }
+      const real5m = await loadRealIntradayData(symbol, '5m', targetYear);
+      if (real5m && real5m.length > 0) {
+        const sub = subdivideRealCandles(real5m, timeframe, targetTs || now, 2500);
+        memoryCache[cacheKey] = sub;
+        return sub;
+      }
+    }
+
+    if (timeframe === '3m') {
+      const real1m = await loadRealIntradayData(symbol, '1m', targetYear);
+      if (real1m && real1m.length > 0) {
+        const agg3m = aggregateCandles(real1m, 180);
+        memoryCache[cacheKey] = agg3m;
+        return agg3m;
+      }
       const real5m = await loadRealIntradayData(symbol, '5m', targetYear);
       if (real5m && real5m.length > 0) {
         const sub = subdivideRealCandles(real5m, timeframe, targetTs || now, 2500);

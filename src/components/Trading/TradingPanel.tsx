@@ -82,6 +82,7 @@ export const TradingPanel: React.FC = () => {
     const slDist = Math.abs(entry - orderSetup.stopLoss) || roundPrice(entry * 0.008);
     const tpDist = Math.abs(orderSetup.takeProfit - entry) || roundPrice(slDist * 2);
     updateOrderSetup({
+      enabled: true,
       side,
       stopLoss: side === 'long' ? roundPrice(entry - slDist) : roundPrice(entry + slDist),
       takeProfit: side === 'long' ? roundPrice(entry + tpDist) : roundPrice(entry - tpDist),
@@ -94,6 +95,7 @@ export const TradingPanel: React.FC = () => {
       ? (orderSetup.side === 'long' ? roundPrice(currentPrice * 0.995) : roundPrice(currentPrice * 1.005))
       : currentPrice;
     updateOrderSetup({
+      enabled: true,
       orderType: type,
       entryPrice: entry,
     });
@@ -270,6 +272,23 @@ export const TradingPanel: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6 max-w-5xl mx-auto">
               {/* Left Column: Order Setup Controls (No box nesting!) */}
               <div className="md:col-span-6 space-y-3.5">
+                {/* Header & Chart SL/TP Toggle */}
+                <div className="flex items-center justify-between pb-0.5">
+                  <span className="text-[10px] font-semibold text-[#787b86] uppercase tracking-wide">Параметры ордера</span>
+                  <button
+                    onClick={() => updateOrderSetup({ enabled: !orderSetup.enabled })}
+                    className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                      orderSetup.enabled
+                        ? 'bg-[#089981]/20 text-[#089981] border border-[#089981]/40'
+                        : 'bg-[#10121a] text-[#787b86] hover:text-white border border-[#242731]'
+                    }`}
+                    title="Включить/выключить отображение и перетаскивание линий SL/TP прямо на графике"
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${orderSetup.enabled ? 'bg-[#089981]' : 'bg-[#787b86]'}`} />
+                    <span>Линии SL / TP на графике: {orderSetup.enabled ? 'ВКЛ' : 'ВЫКЛ'}</span>
+                  </button>
+                </div>
+
                 {/* Order Type & Side Row */}
                 <div className="grid grid-cols-2 gap-3">
                   {/* Market vs Limit */}
@@ -400,7 +419,7 @@ export const TradingPanel: React.FC = () => {
                       type="number"
                       step={symbolInfo.minMove}
                       value={orderSetup.stopLoss}
-                      onChange={(e) => updateOrderSetup({ stopLoss: parseFloat(e.target.value) || 0 })}
+                      onChange={(e) => updateOrderSetup({ stopLoss: parseFloat(e.target.value) || 0, enabled: true })}
                       className="w-full px-2.5 py-1.5 bg-[#10121a] border border-[#242731] rounded font-mono text-white text-xs outline-none focus:border-[#2962ff]"
                     />
                   </div>
@@ -411,7 +430,7 @@ export const TradingPanel: React.FC = () => {
                       type="number"
                       step={symbolInfo.minMove}
                       value={orderSetup.takeProfit}
-                      onChange={(e) => updateOrderSetup({ takeProfit: parseFloat(e.target.value) || 0 })}
+                      onChange={(e) => updateOrderSetup({ takeProfit: parseFloat(e.target.value) || 0, enabled: true })}
                       className="w-full px-2.5 py-1.5 bg-[#10121a] border border-[#242731] rounded font-mono text-white text-xs outline-none focus:border-[#2962ff]"
                     />
                   </div>

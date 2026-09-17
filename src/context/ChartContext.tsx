@@ -360,7 +360,7 @@ export const ChartProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Pre-trade Order Setup
 
   const [orderSetup, setOrderSetup] = useState<OrderSetupPreview>({
-    enabled: false,
+    enabled: true, // Enabled by default so pre-trade SL/TP draggable handles appear immediately on the chart
     side: 'long',
     orderType: 'market',
     entryPrice: symbolInfo.defaultPrice,

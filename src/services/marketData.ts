@@ -449,8 +449,8 @@ export async function getCandlesForTimeframe(
     }
   }
 
-  // 3. REAL INTRADAY ARCHIVES (5m, 15m, 30m, 1m, 3m for 2021-2022):
-  if (targetYear === 2021 || targetYear === 2022) {
+  // 3. REAL INTRADAY ARCHIVES (1m, 3m, 5m, 15m, 30m for 2021-2026):
+  if (targetYear >= 2021 && targetYear <= 2026) {
     if (timeframe === '5m') {
       const real5m = await loadRealIntradayData(symbol, '5m', targetYear);
       if (real5m && real5m.length > 0) {

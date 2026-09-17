@@ -66,6 +66,7 @@ export const DrawingSettingsModal: React.FC<DrawingSettingsModalProps> = ({
         textVAlign: drawing.textVAlign || 'top',
         textHAlign: drawing.textHAlign || 'left',
         points: drawing.points ? [...drawing.points] : [],
+        riskReward: drawing.riskReward ? { ...drawing.riskReward } : undefined,
       });
       setTemplates(loadStoredDrawingTemplates());
     }
@@ -507,6 +508,61 @@ export const DrawingSettingsModal: React.FC<DrawingSettingsModalProps> = ({
                       </div>
                     </div>
                   ))}
+
+                {form.riskReward && (
+                  <div className="space-y-2 pt-1 border-t border-[#242731]">
+                    <div className="p-3 bg-[#181b24] border border-[#2a2e39] rounded-xl flex items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-white">Цена входа (Entry)</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-tv-textMuted">$</span>
+                        <input
+                          type="number"
+                          step="any"
+                          value={form.riskReward.entryPrice}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            updateField({ riskReward: { ...form.riskReward!, entryPrice: val } });
+                          }}
+                          className="w-32 px-2.5 py-1 bg-[#1e222d] border border-[#2a2e39] rounded-lg text-xs font-mono text-white text-right focus:outline-none focus:border-tv-blue"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-[#181b24] border border-[#2a2e39] rounded-xl flex items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-[#f23645]">Stop Loss</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-tv-textMuted">$</span>
+                        <input
+                          type="number"
+                          step="any"
+                          value={form.riskReward.stopLossPrice}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            updateField({ riskReward: { ...form.riskReward!, stopLossPrice: val } });
+                          }}
+                          className="w-32 px-2.5 py-1 bg-[#1e222d] border border-[#2a2e39] rounded-lg text-xs font-mono text-white text-right focus:outline-none focus:border-tv-blue"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-[#181b24] border border-[#2a2e39] rounded-xl flex items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-[#089981]">Take Profit</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-tv-textMuted">$</span>
+                        <input
+                          type="number"
+                          step="any"
+                          value={form.riskReward.takeProfitPrice}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            updateField({ riskReward: { ...form.riskReward!, takeProfitPrice: val } });
+                          }}
+                          className="w-32 px-2.5 py-1 bg-[#1e222d] border border-[#2a2e39] rounded-lg text-xs font-mono text-white text-right focus:outline-none focus:border-tv-blue"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -41,18 +41,6 @@ export const LeftToolRail: React.FC = () => {
   } = useChart();
 
   const handleToolClick = (toolId: DrawingTool) => {
-    if (toolId === 'position_long') {
-      updateOrderSetup({ side: 'long', enabled: true });
-      setActiveTool('cursor');
-      return;
-    }
-
-    if (toolId === 'position_short') {
-      updateOrderSetup({ side: 'short', enabled: true });
-      setActiveTool('cursor');
-      return;
-    }
-
     setActiveTool(activeTool === toolId ? 'cursor' : toolId);
   };
 

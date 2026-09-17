@@ -14,7 +14,7 @@ import {
   createSeriesMarkers,
 } from 'lightweight-charts';
 import { useChart } from '../../context/ChartContext';
-import { formatDateTime, formatPrice, formatTickMark, formatVolume, TIMEZONE_OPTIONS } from '../../utils/formatters';
+import { formatDateTime, formatPrice, formatTickMark, formatVolume, TIMEZONE_OPTIONS, getTimeframeSeconds } from '../../utils/formatters';
 import { calculateRiskPosition } from '../../services/tradeEngine';
 import { SUPPORTED_SYMBOLS, SupportedSymbol } from '../../types/session';
 import { Scissors, GripVertical, X, Globe, ChevronDown, Check, Eye, EyeOff, Settings } from 'lucide-react';
@@ -76,6 +76,7 @@ export const TradingViewChart: React.FC = () => {
 
   const {
     symbol,
+    timeframe,
     visibleCandles,
     currentCandle,
     candleColors,
@@ -94,6 +95,9 @@ export const TradingViewChart: React.FC = () => {
     sessionsSettings,
     toggleSessions,
     updateSessionsSettings,
+    newsFilter,
+    toggleNews,
+    executeTrade,
     activeScript,
     scriptOutput,
     clearScriptOutput,
@@ -165,9 +169,10 @@ export const TradingViewChart: React.FC = () => {
         borderColor: themeSettings.borderColor,
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 14,
+        rightOffset: 25,
         barSpacing: 8,
         minBarSpacing: 3,
+        allowBoldLabels: true,
         tickMarkFormatter: (time: any, tickMarkType: any) => formatTickMark(time, tickMarkType, timezone),
       },
       handleScroll: {
@@ -480,7 +485,16 @@ export const TradingViewChart: React.FC = () => {
       low: c.low,
       close: c.close,
     }));
-    candleSeriesRef.current.setData(formattedCandles);
+    const tfSec = getTimeframeSeconds(timeframe);
+    const lastTime = visibleCandles[visibleCandles.length - 1].time;
+    const futureWhitespace: Array<{ time: Time }> = [];
+    for (let i = 1; i <= 60; i++) {
+      futureWhitespace.push({
+        time: (lastTime + i * tfSec) as Time,
+      });
+    }
+
+    candleSeriesRef.current.setData([...formattedCandles, ...futureWhitespace] as any);
 
     if (volumeSeriesRef.current) {
       const isVolVisible = showVolume !== false;
@@ -980,76 +994,172 @@ export const TradingViewChart: React.FC = () => {
         }`}
       />
 
-      {/* Top-Left Chart Legend / Indicator bar (TradingView style) */}
-      <div className="absolute top-2.5 left-3 z-20 pointer-events-auto flex items-center gap-2 select-none font-sans">
-        {showVolume ? (
-          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
-            <span className="text-tv-textMuted font-sans">Объем:</span>
-            <span className="text-white font-semibold">
-              {currentCandle ? formatVolume(currentCandle.volume) : '—'}
+      {/* Top-Left Floating Header: Quick Buy/Sell & Symbol OHLC Legend (TradingView Style) */}
+      <div className="absolute top-2.5 left-3 z-30 pointer-events-auto flex flex-col gap-1.5 select-none font-sans">
+        {/* Row 1: TradingView Quick Buy / Sell Execution Bar */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-stretch shadow-2xl rounded-lg overflow-hidden border border-[#2a2e39] bg-[#131722]/90 backdrop-blur-md">
+            {/* SELL BUTTON */}
+            <button
+              onClick={() => {
+                const price = currentCandle?.close || symbolInfo.defaultPrice;
+                const sl = Number((price * 1.01).toFixed(symbolInfo.pricePrecision));
+                const tp = Number((price * 0.98).toFixed(symbolInfo.pricePrecision));
+                executeTrade('short', sl, tp);
+              }}
+              className="flex flex-col items-center justify-center px-3 py-1 bg-[#f23645]/90 hover:bg-[#f23645] text-white transition-all cursor-pointer border-r border-black/30 group active:scale-95"
+              title="Быстрая продажа (Market SELL со стопом 1% и тейком 2%)"
+            >
+              <span className="text-[11px] font-bold font-mono group-hover:scale-105 transition-transform">
+                {formatPrice(currentCandle?.close || symbolInfo.defaultPrice, symbolInfo.precision)}
+              </span>
+              <span className="text-[9px] font-sans uppercase font-bold opacity-80">SELL</span>
+            </button>
+
+            {/* LOT SIZE / QUANTITY */}
+            <div className="px-2 py-1 flex items-center justify-center bg-[#181b24] text-[11px] font-mono text-white min-w-[48px] border-r border-black/30">
+              <span>{symbolInfo.minLot}</span>
+            </div>
+
+            {/* BUY BUTTON */}
+            <button
+              onClick={() => {
+                const price = currentCandle?.close || symbolInfo.defaultPrice;
+                const sl = Number((price * 0.99).toFixed(symbolInfo.pricePrecision));
+                const tp = Number((price * 1.02).toFixed(symbolInfo.pricePrecision));
+                executeTrade('long', sl, tp);
+              }}
+              className="flex flex-col items-center justify-center px-3 py-1 bg-[#2962ff]/90 hover:bg-[#2962ff] text-white transition-all cursor-pointer group active:scale-95"
+              title="Быстрая покупка (Market BUY со стопом 1% и тейком 2%)"
+            >
+              <span className="text-[11px] font-bold font-mono group-hover:scale-105 transition-transform">
+                {formatPrice(currentCandle?.close || symbolInfo.defaultPrice, symbolInfo.precision)}
+              </span>
+              <span className="text-[9px] font-sans uppercase font-bold opacity-80">BUY</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Row 2: Symbol Name & OHLC Ticker Values */}
+        {currentCandle && (
+          <div className="flex items-center gap-2 text-xs font-mono text-[#d1d4dc] bg-[#131722]/60 backdrop-blur-xs px-2 py-0.5 rounded border border-white/[0.04] w-fit">
+            <span className="font-bold text-white text-xs">{symbolInfo.name || symbol}</span>
+            <span className="text-[#787b86]">·</span>
+            <span className="text-white uppercase font-semibold">{timeframe}</span>
+            <span className="text-[#787b86]">·</span>
+            <span className="text-[#787b86]">O</span>
+            <span className="text-white">{formatPrice(currentCandle.open, symbolInfo.precision)}</span>
+            <span className="text-[#787b86]">H</span>
+            <span className="text-white">{formatPrice(currentCandle.high, symbolInfo.precision)}</span>
+            <span className="text-[#787b86]">L</span>
+            <span className="text-white">{formatPrice(currentCandle.low, symbolInfo.precision)}</span>
+            <span className="text-[#787b86]">C</span>
+            <span
+              className={
+                currentCandle.close >= currentCandle.open ? 'text-[#089981] font-bold' : 'text-[#f23645] font-bold'
+              }
+            >
+              {formatPrice(currentCandle.close, symbolInfo.precision)}
             </span>
-            <button
-              onClick={() => toggleVolume()}
-              title="Скрыть гистограмму объемов"
-              className="p-0.5 text-tv-textMuted hover:text-white rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+            <span
+              className={`text-[11px] font-semibold ${
+                currentCandle.close >= currentCandle.open ? 'text-[#089981]' : 'text-[#f23645]'
+              }`}
             >
-              <Eye className="w-3 h-3" />
-            </button>
-            <button
-              onClick={() => updateCandleColors({ showVolume: false })}
-              title="Удалить индикатор объема"
-              className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => updateCandleColors({ showVolume: true })}
-            title="Показать гистограмму объемов торгов"
-            className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] hover:border-tv-blue text-tv-textMuted hover:text-white rounded-md text-[11px] transition-colors cursor-pointer shadow-sm"
-          >
-            <EyeOff className="w-3 h-3 text-tv-yellow" />
-            <span>+ Объем</span>
-          </button>
-        )}
-
-        {/* Sessions Indicator Legend Badge */}
-        {sessionsSettings.enabled && (
-          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
-            <span className="w-1.5 h-1.5 rounded-full bg-tv-blue animate-pulse" />
-            <span className="text-tv-blue font-semibold font-sans">Сессии: Вкл</span>
-            <button
-              onClick={() => setIsSessionSettingsOpen(true)}
-              title="Настройки индикатора сессий (Стиль, диапазоны, цвета)"
-              className="p-0.5 text-tv-textMuted hover:text-white rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
-            >
-              <Settings className="w-3 h-3" />
-            </button>
-            <button
-              onClick={() => toggleSessions()}
-              title="Выключить отображение сессий"
-              className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer"
-            >
-              <X className="w-3 h-3" />
-            </button>
+              {currentCandle.open > 0
+                ? (((currentCandle.close - currentCandle.open) / currentCandle.open) * 100).toFixed(2)
+                : '0.00'}
+              %
+            </span>
           </div>
         )}
 
-        {/* Custom Script Indicator Legend Badge */}
-        {activeScript && scriptOutput && scriptOutput.success && (
-          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#00e5ff]" />
-            <span className="text-[#00e5ff] font-semibold font-sans">{activeScript.name}</span>
-            <button
-              onClick={() => clearScriptOutput()}
-              title="Удалить пользовательский скрипт с графика"
-              className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        )}
+        {/* Row 3: Active Indicators Legend with Eye Toggles */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Sessions Indicator Badge */}
+          {sessionsSettings.enabled && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-tv-blue" />
+              <span className="text-tv-blue font-semibold font-sans">Сессии ICT</span>
+              <button
+                onClick={() => setIsSessionSettingsOpen(true)}
+                title="Настройки индикатора сессий"
+                className="p-0.5 text-tv-textMuted hover:text-white rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+              >
+                <Settings className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => toggleSessions()}
+                title="Скрыть сессии"
+                className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer"
+              >
+                <Eye className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
+          {/* News Calendar Indicator Badge */}
+          {newsFilter.enabled && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#ab47bc]" />
+              <span className="text-[#ab47bc] font-semibold font-sans">Новости ({newsFilter.minImportance.toUpperCase()})</span>
+              <button
+                onClick={() => toggleNews()}
+                title="Скрыть новости"
+                className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer"
+              >
+                <Eye className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Volume Indicator Badge */}
+          {showVolume && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
+              <span className="text-tv-textMuted font-sans">Объем:</span>
+              <span className="text-white font-semibold">
+                {currentCandle ? formatVolume(currentCandle.volume) : '—'}
+              </span>
+              <button
+                onClick={() => toggleVolume()}
+                title="Скрыть гистограмму объемов"
+                className="p-0.5 text-tv-textMuted hover:text-white rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+              >
+                <Eye className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Fractals Indicator Badge */}
+          {showFractals && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#089981]" />
+              <span className="text-white font-semibold font-sans">Фракталы</span>
+              <button
+                onClick={() => (window as any).__toggleFractals?.()}
+                title="Индикатор фракталов активен"
+                className="p-0.5 text-tv-textMuted hover:text-white rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer"
+              >
+                <Eye className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Custom Script Indicator Legend Badge */}
+          {activeScript && scriptOutput && scriptOutput.success && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e222d]/85 backdrop-blur-sm border border-[#2a2e39] rounded-md text-[11px] font-mono text-tv-text hover:bg-[#1e222d] transition-colors group shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00e5ff]" />
+              <span className="text-[#00e5ff] font-semibold font-sans">{activeScript.name}</span>
+              <button
+                onClick={() => clearScriptOutput()}
+                title="Удалить пользовательский скрипт с графика"
+                className="p-0.5 text-tv-textMuted hover:text-tv-red rounded transition-colors opacity-70 group-hover:opacity-100 cursor-pointer ml-1"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* INTERACTIVE DRAGGABLE BADGES OVERLAY */}
@@ -1354,10 +1464,7 @@ export const TradingViewChart: React.FC = () => {
 
       {/* Economic News Calendar Markers Layer */}
       <NewsLayer
-        timeToCoordinate={(time: number) => {
-          if (!chartInstance) return null;
-          return chartInstance.timeScale().timeToCoordinate(time as any);
-        }}
+        chart={chartInstance}
         chartWidth={containerRef.current?.clientWidth || 800}
       />
     </div>

@@ -17,6 +17,9 @@ import {
   Search,
   SlidersHorizontal,
   Newspaper,
+  Undo2,
+  Redo2,
+  CandlestickChart,
 } from 'lucide-react';
 import { useChart } from '../../context/ChartContext';
 import { Timeframe } from '../../types/chart';
@@ -100,6 +103,10 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
     newsFilter,
     updateNewsFilter,
     toggleNews,
+    undoDrawing,
+    redoDrawing,
+    canUndoDrawing,
+    canRedoDrawing,
   } = useChart();
 
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -108,7 +115,6 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
   const [isSymbolMenuOpen, setIsSymbolMenuOpen] = useState(false);
   const [isTfMenuOpen, setIsTfMenuOpen] = useState(false);
   const [isPropPopOpen, setIsPropPopOpen] = useState(false);
-  const [isNewsMenuOpen, setIsNewsMenuOpen] = useState(false);
   const [symbolSearch, setSymbolSearch] = useState('');
   const [assetTab, setAssetTab] = useState<AssetClass | 'all'>('all');
 
@@ -197,7 +203,6 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
               setIsSymbolMenuOpen(!isSymbolMenuOpen);
               setIsTfMenuOpen(false);
               setIsPropPopOpen(false);
-              setIsNewsMenuOpen(false);
               setIsIndicatorsOpen(false);
             }}
             className="flex items-center gap-2 px-2 py-1 hover:bg-[#1e222d] rounded transition-colors cursor-pointer"
@@ -325,7 +330,6 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
                 setIsTfMenuOpen(!isTfMenuOpen);
                 setIsSymbolMenuOpen(false);
                 setIsPropPopOpen(false);
-                setIsNewsMenuOpen(false);
                 setIsIndicatorsOpen(false);
               }}
               className="p-1 text-[#787b86] hover:text-white hover:bg-[#1e222d] rounded transition-colors cursor-pointer"
@@ -369,6 +373,16 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
 
         <div className="w-[1px] h-4 bg-[#242731] mx-1" />
 
+        {/* Candle Style (TradingView style) */}
+        <button
+          title="Японские свечи"
+          className="p-1.5 text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d] rounded transition-colors cursor-pointer"
+        >
+          <CandlestickChart className="w-4 h-4 text-[#2962ff]" />
+        </button>
+
+        <div className="w-[1px] h-4 bg-[#242731] mx-1" />
+
         {/* Indicators Dropdown */}
         <div className="relative">
           <button
@@ -377,128 +391,138 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
               setIsSymbolMenuOpen(false);
               setIsTfMenuOpen(false);
               setIsPropPopOpen(false);
-              setIsNewsMenuOpen(false);
             }}
-            title="Индикаторы графика"
+            title="Индикаторы и показатели"
             className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
-              showFractals || sessionsSettings.enabled || isIndicatorsOpen
+              showFractals || sessionsSettings.enabled || newsFilter.enabled || isIndicatorsOpen
                 ? 'bg-[#242731] text-white'
                 : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
             }`}
           >
             <Activity className="w-3.5 h-3.5 text-[#2962ff]" />
-            <span className="hidden xl:inline">Индикаторы</span>
+            <span className="hidden sm:inline">Индикаторы</span>
           </button>
 
           {isIndicatorsOpen && (
-            <div className="absolute left-0 top-full mt-1 w-60 bg-[#181b24] border border-[#2a2e39] rounded-lg shadow-2xl p-1.5 z-50 space-y-0.5">
-              <div className="px-2 py-1 text-[9px] font-semibold uppercase text-[#787b86] border-b border-[#242731]">
-                Индикаторы
+            <div className="absolute left-0 top-full mt-1 w-64 bg-[#181b24] border border-[#2a2e39] rounded-lg shadow-2xl p-1.5 z-50 space-y-0.5 divide-y divide-[#242731]/60">
+              <div className="space-y-0.5 pb-1">
+                <div className="px-2 py-0.5 text-[9px] font-semibold uppercase text-[#787b86]">
+                  Графические индикаторы
+                </div>
+
+                <div
+                  className={`w-full flex items-center justify-between px-2.5 py-1 rounded text-xs transition-colors ${
+                    sessionsSettings.enabled ? 'bg-[#2962ff]/20 text-white font-medium' : 'text-[#d1d4dc] hover:bg-[#1e222d]'
+                  }`}
+                >
+                  <button
+                    onClick={toggleSessions}
+                    className="flex-1 flex items-center justify-between text-left cursor-pointer py-0.5"
+                  >
+                    <span>Торговые сессии (Killzones)</span>
+                    {sessionsSettings.enabled && <Check className="w-3.5 h-3.5 text-[#2962ff] mr-1" />}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsSessionSettingsOpen(true);
+                      setIsIndicatorsOpen(false);
+                    }}
+                    title="Настройки торговых сессий"
+                    className="p-1 text-[#787b86] hover:text-white hover:bg-white/10 rounded transition-colors cursor-pointer"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setShowFractals(!showFractals)}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-xs transition-colors cursor-pointer ${
+                    showFractals ? 'bg-[#2962ff]/20 text-white font-medium' : 'text-[#d1d4dc] hover:bg-[#1e222d]'
+                  }`}
+                >
+                  <span>Фракталы Вильямса</span>
+                  {showFractals && <Check className="w-3.5 h-3.5 text-[#2962ff]" />}
+                </button>
+
+                <button
+                  onClick={toggleVolume}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-xs transition-colors cursor-pointer ${
+                    showVolume ? 'bg-[#2962ff]/20 text-white font-medium' : 'text-[#d1d4dc] hover:bg-[#1e222d]'
+                  }`}
+                >
+                  <span>Объемы (Volume)</span>
+                  {showVolume && <Check className="w-3.5 h-3.5 text-[#2962ff]" />}
+                </button>
               </div>
 
-              <div
-                className={`w-full flex items-center justify-between px-2.5 py-1 rounded text-xs transition-colors ${
-                  sessionsSettings.enabled ? 'bg-[#2962ff]/20 text-white font-medium' : 'text-[#d1d4dc] hover:bg-[#1e222d]'
-                }`}
-              >
-                <button
-                  onClick={toggleSessions}
-                  className="flex-1 flex items-center justify-between text-left cursor-pointer py-0.5"
-                >
-                  <span>Торговые сессии (Killzones)</span>
-                  {sessionsSettings.enabled && <Check className="w-3.5 h-3.5 text-[#2962ff] mr-1" />}
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsSessionSettingsOpen(true);
-                    setIsIndicatorsOpen(false);
-                  }}
-                  title="Настройки торговых сессий (цвета, стиль, часы)"
-                  className="p-1 text-[#787b86] hover:text-white hover:bg-white/10 rounded transition-colors cursor-pointer"
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                </button>
+              {/* Economic News Calendar in dropdown */}
+              <div className="pt-1.5 pb-0.5 px-2 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs text-[#d1d4dc] font-medium">
+                    <Newspaper className="w-3.5 h-3.5 text-[#f7a600]" />
+                    <span>Новости на графике</span>
+                  </div>
+                  <button
+                    onClick={toggleNews}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                      newsFilter.enabled ? 'bg-[#089981] text-white' : 'bg-[#242731] text-[#787b86] hover:text-white'
+                    }`}
+                  >
+                    {newsFilter.enabled ? 'ВКЛ' : 'ВЫКЛ'}
+                  </button>
+                </div>
+
+                {newsFilter.enabled && (
+                  <div className="grid grid-cols-3 gap-1 pt-0.5">
+                    {(['high', 'medium', 'low'] as NewsImportance[]).map((lvl) => (
+                      <button
+                        key={lvl}
+                        onClick={() => updateNewsFilter({ minImportance: lvl, enabled: true })}
+                        className={`py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                          newsFilter.minImportance === lvl
+                            ? 'bg-[#2962ff] text-white font-bold'
+                            : 'bg-[#131722] text-[#787b86] hover:text-white'
+                        }`}
+                      >
+                        {lvl === 'high' ? '🔴 High' : lvl === 'medium' ? '🟠 Med+' : '🟡 All'}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-
-              <button
-                onClick={() => setShowFractals(!showFractals)}
-                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-xs transition-colors cursor-pointer ${
-                  showFractals ? 'bg-[#2962ff]/20 text-white font-medium' : 'text-[#d1d4dc] hover:bg-[#1e222d]'
-                }`}
-              >
-                <span>Фракталы Билла Вильямса</span>
-                {showFractals && <Check className="w-3.5 h-3.5 text-[#2962ff]" />}
-              </button>
-
-              <button
-                onClick={toggleVolume}
-                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-xs transition-colors cursor-pointer ${
-                  showVolume ? 'bg-[#2962ff]/20 text-white font-medium' : 'text-[#d1d4dc] hover:bg-[#1e222d]'
-                }`}
-              >
-                <span>Объемы (Volume Bar)</span>
-                {showVolume && <Check className="w-3.5 h-3.5 text-[#2962ff]" />}
-              </button>
             </div>
           )}
         </div>
 
-        {/* Economic News Toggle & Filter Dropdown */}
-        <div className="relative">
+        <div className="w-[1px] h-4 bg-[#242731] mx-1" />
+
+        {/* Undo / Redo */}
+        <div className="flex items-center gap-0.5">
           <button
-            onClick={() => {
-              setIsNewsMenuOpen(!isNewsMenuOpen);
-              setIsSymbolMenuOpen(false);
-              setIsTfMenuOpen(false);
-              setIsPropPopOpen(false);
-              setIsIndicatorsOpen(false);
-            }}
-            title="Экономический календарь новостей"
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
-              newsFilter.enabled
-                ? 'bg-[#242731] text-white'
-                : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
+            onClick={undoDrawing}
+            disabled={!canUndoDrawing}
+            title="Отменить (Ctrl+Z)"
+            className={`p-1.5 rounded transition-colors ${
+              canUndoDrawing
+                ? 'text-[#d1d4dc] hover:text-white hover:bg-[#1e222d] cursor-pointer'
+                : 'text-[#434651] cursor-not-allowed opacity-40'
             }`}
           >
-            <Newspaper className="w-3.5 h-3.5 text-[#f7a600]" />
-            <span className="hidden xl:inline">
-              Новости {newsFilter.enabled ? `(${newsFilter.minImportance.toUpperCase()})` : 'Выкл'}
-            </span>
+            <Undo2 className="w-3.5 h-3.5" />
           </button>
-
-          {isNewsMenuOpen && (
-            <div className="absolute left-0 top-full mt-1 w-64 bg-[#181b24] border border-[#2a2e39] rounded-lg shadow-2xl p-2 z-50 space-y-1.5">
-              <div className="flex items-center justify-between pb-1.5 border-b border-[#242731]">
-                <span className="text-[10px] font-semibold uppercase text-[#787b86]">Новости на графике</span>
-                <button
-                  onClick={toggleNews}
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    newsFilter.enabled ? 'bg-[#089981] text-white' : 'bg-[#242731] text-[#787b86]'
-                  }`}
-                >
-                  {newsFilter.enabled ? 'ВКЛ' : 'ВЫКЛ'}
-                </button>
-              </div>
-
-              <div className="text-[10px] text-[#787b86] pt-1">Фильтр важности:</div>
-              <div className="grid grid-cols-3 gap-1">
-                {(['high', 'medium', 'low'] as NewsImportance[]).map((lvl) => (
-                  <button
-                    key={lvl}
-                    onClick={() => updateNewsFilter({ minImportance: lvl, enabled: true })}
-                    className={`py-1 rounded text-[10px] font-medium transition-colors ${
-                      newsFilter.minImportance === lvl && newsFilter.enabled
-                        ? 'bg-[#2962ff] text-white font-bold'
-                        : 'bg-[#131722] text-[#787b86] hover:text-white'
-                    }`}
-                  >
-                    {lvl === 'high' ? '🔴 High' : lvl === 'medium' ? '🟠 Med+' : '🟡 All'}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          <button
+            onClick={redoDrawing}
+            disabled={!canRedoDrawing}
+            title="Повторить (Ctrl+Y)"
+            className={`p-1.5 rounded transition-colors ${
+              canRedoDrawing
+                ? 'text-[#d1d4dc] hover:text-white hover:bg-[#1e222d] cursor-pointer'
+                : 'text-[#434651] cursor-not-allowed opacity-40'
+            }`}
+          >
+            <Redo2 className="w-3.5 h-3.5" />
+          </button>
         </div>
 
         <div className="w-[1px] h-4 bg-[#242731] mx-1" />
@@ -517,43 +541,16 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
             replay.isActive
               ? 'bg-[#2962ff] text-white shadow-sm font-semibold'
               : replay.isSelectingCutPoint
-              ? 'bg-[#f59e0b] text-black shadow-sm font-semibold'
+              ? 'bg-[#f59e0b] text-black shadow-sm font-semibold animate-pulse'
               : 'text-[#d1d4dc] hover:text-white hover:bg-[#1e222d]'
           }`}
         >
           <Scissors className="w-3.5 h-3.5" />
-          <span>{replay.isActive ? 'Симуляция ВКЛ' : replay.isSelectingCutPoint ? 'Выберите срез' : 'Replay'}</span>
-          <span className="text-[10px] opacity-70 font-mono">R</span>
+          <span className="hidden sm:inline">
+            {replay.isActive ? 'Симуляция' : replay.isSelectingCutPoint ? 'Срез...' : 'Replay'}
+          </span>
         </button>
       </div>
-
-      {/* Center: Clean Monospace OHLCV Ticker */}
-      {currentCandle && (
-        <div className="hidden lg:flex items-center gap-3 text-xs font-mono tabular-nums">
-          <div className="flex items-center gap-1">
-            <span className="text-[#787b86]">O</span>
-            <span className="text-white">{formatPrice(currentCandle.open, symbolInfo.precision)}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[#787b86]">H</span>
-            <span className="text-white">{formatPrice(currentCandle.high, symbolInfo.precision)}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[#787b86]">L</span>
-            <span className="text-white">{formatPrice(currentCandle.low, symbolInfo.precision)}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[#787b86]">C</span>
-            <span className={isBullish ? 'text-[#089981] font-semibold' : 'text-[#f23645] font-semibold'}>
-              {formatPrice(currentCandle.close, symbolInfo.precision)}
-            </span>
-          </div>
-          <div className={`flex items-center gap-0.5 text-[11px] ${isBullish ? 'text-[#089981]' : 'text-[#f23645]'}`}>
-            {isBullish ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-            <span>{formatPercent(candleChangePercent)}</span>
-          </div>
-        </div>
-      )}
 
       {/* Right Group: Prop Challenge Meter & Controls */}
       <div className="flex items-center gap-1">
@@ -565,7 +562,6 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenSettings, onOpenDateModal 
                 setIsPropPopOpen(!isPropPopOpen);
                 setIsSymbolMenuOpen(false);
                 setIsTfMenuOpen(false);
-                setIsNewsMenuOpen(false);
                 setIsIndicatorsOpen(false);
               }}
               className="flex items-center gap-2 px-2.5 py-1 text-xs font-mono hover:bg-[#1e222d] rounded transition-colors cursor-pointer"

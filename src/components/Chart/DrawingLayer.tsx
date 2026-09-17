@@ -29,13 +29,19 @@ type HandleType =
   | 'rect_w'
   | 'line_p1'
   | 'line_p2'
-  | 'horz_price';
+  | 'horz_price'
+  | 'pos_target'
+  | 'pos_stop'
+  | 'pos_entry'
+  | 'pos_left'
+  | 'pos_right';
 
 interface DragState {
   drawingId: string;
   handle: HandleType;
   startMousePoint: DrawingPoint;
   initialPoints: DrawingPoint[];
+  initialRiskReward?: { entryPrice: number; stopLossPrice: number; takeProfitPrice: number };
 }
 
 const PALETTE_COLORS = [
@@ -171,6 +177,9 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     magnetMode,
     symbolInfo,
     pushDrawingHistory,
+    executeTrade,
+    balance,
+    riskSettings,
   } = useChart();
 
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -559,6 +568,32 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
           extendRight: true,
           text: toolDefaults.text || '',
         });
+      } else if (activeTool === 'position_long' || activeTool === 'position_short') {
+        const isLong = activeTool === 'position_long';
+        const tfSec = getTimeframeSeconds(timeframe);
+        const defaultDist = Math.max(p1.price * 0.01, 1);
+        const slPrice = isLong
+          ? Number((p1.price - defaultDist).toFixed(symbolInfo.pricePrecision || 1))
+          : Number((p1.price + defaultDist).toFixed(symbolInfo.pricePrecision || 1));
+        const tpPrice = isLong
+          ? Number((p1.price + defaultDist * 2).toFixed(symbolInfo.pricePrecision || 1))
+          : Number((p1.price - defaultDist * 2).toFixed(symbolInfo.pricePrecision || 1));
+        const endT = p1.time + 25 * tfSec;
+
+        addDrawing({
+          id: newId,
+          type: activeTool,
+          points: [
+            { time: p1.time, price: p1.price },
+            { time: endT, price: p1.price },
+          ],
+          color: isLong ? '#089981' : '#f23645',
+          riskReward: {
+            entryPrice: p1.price,
+            stopLossPrice: slPrice,
+            takeProfitPrice: tpPrice,
+          },
+        });
       }
 
       setStartPoint(null);
@@ -573,7 +608,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
         preventDeselectRef.current = false;
       }, 300);
     },
-    [activeTool, addDrawing, setActiveTool, setSelectedDrawingId]
+    [activeTool, addDrawing, setActiveTool, setSelectedDrawingId, timeframe, symbolInfo]
   );
 
   // Native chart canvas click subscriber: select drawing when clicked inside, deselect on blank area
@@ -602,6 +637,26 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
             const right = d.extendRight ? containerW + 10 : baseRight;
 
             if (x >= left - 4 && x <= right + 4 && y >= top - 4 && y <= bottom + 4) {
+              setSelectedDrawingId(d.id);
+              return;
+            }
+          }
+        }
+
+        if ((d.type === 'position_long' || d.type === 'position_short') && d.points.length >= 2 && d.riskReward) {
+          const p1 = getCoordinates(d.points[0]);
+          const p2 = getCoordinates(d.points[1]);
+          const entryY = candleSeries.priceToCoordinate(d.riskReward.entryPrice);
+          const slY = candleSeries.priceToCoordinate(d.riskReward.stopLossPrice);
+          const tpY = candleSeries.priceToCoordinate(d.riskReward.takeProfitPrice);
+
+          if (p1.x !== null && p2.x !== null && entryY !== null && slY !== null && tpY !== null) {
+            const left = Math.min(p1.x, p2.x);
+            const right = Math.max(p1.x, p2.x);
+            const minY = Math.min(entryY, slY, tpY);
+            const maxY = Math.max(entryY, slY, tpY);
+
+            if (x >= left - 6 && x <= right + 6 && y >= minY - 6 && y <= maxY + 6) {
               setSelectedDrawingId(d.id);
               return;
             }
@@ -683,7 +738,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
     const pt = getPointFromEvent(e);
     if (!pt) return;
 
-    if (activeTool === 'horizontal') {
+    if (activeTool === 'horizontal' || activeTool === 'position_long' || activeTool === 'position_short') {
       finalizeCreation(pt, pt);
       isMouseDownForCreationRef.current = false;
       creationStartScreenRef.current = null;
@@ -765,6 +820,7 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
       handle,
       startMousePoint: pt,
       initialPoints: [...drawing.points],
+      initialRiskReward: drawing.riskReward ? { ...drawing.riskReward } : undefined,
     });
   };
 
@@ -778,6 +834,40 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
       if (!curPoint) return;
 
       hasMovedDuringDragRef.current = true;
+
+      // Handle Position Tool transformations (Long & Short)
+      if (handle.startsWith('pos_')) {
+        const drawing = drawings.find((d) => d.id === drawingId);
+        if (!drawing || !drawing.riskReward || !dragState.initialRiskReward) return;
+
+        const initRR = dragState.initialRiskReward;
+        const curPrice = curPoint.price;
+        let newRR = { ...drawing.riskReward };
+        let newPts = [...drawing.points];
+
+        if (handle === 'pos_target') {
+          newRR.takeProfitPrice = curPrice;
+        } else if (handle === 'pos_stop') {
+          newRR.stopLossPrice = curPrice;
+        } else if (handle === 'pos_entry') {
+          const delta = curPrice - initRR.entryPrice;
+          newRR.entryPrice = curPrice;
+          newRR.stopLossPrice = Number((initRR.stopLossPrice + delta).toFixed(symbolInfo.pricePrecision || 1));
+          newRR.takeProfitPrice = Number((initRR.takeProfitPrice + delta).toFixed(symbolInfo.pricePrecision || 1));
+          newPts[0] = { ...newPts[0], price: curPrice };
+          newPts[1] = { ...newPts[1], price: curPrice };
+        } else if (handle === 'pos_left') {
+          newPts[0] = { ...newPts[0], time: curPoint.time };
+        } else if (handle === 'pos_right') {
+          newPts[1] = { ...newPts[1], time: curPoint.time };
+        }
+
+        updateDrawing(drawingId, {
+          points: newPts,
+          riskReward: newRR,
+        });
+        return;
+      }
 
       // Handle Rectangle transformations
       if (handle.startsWith('rect_')) {
@@ -867,9 +957,21 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
         const deltaPrice = curPoint.price - startMousePoint.price;
         const newPoints = initialPoints.map((p) => ({
           time: p.time + deltaTime,
-          price: Number((p.price + deltaPrice).toFixed(1)),
+          price: Number((p.price + deltaPrice).toFixed(symbolInfo.pricePrecision || 1)),
         }));
-        updateDrawing(drawingId, { points: newPoints });
+
+        const drawing = drawings.find((d) => d.id === drawingId);
+        if (drawing && (drawing.type === 'position_long' || drawing.type === 'position_short') && dragState.initialRiskReward) {
+          const initRR = dragState.initialRiskReward;
+          const newRR = {
+            entryPrice: Number((initRR.entryPrice + deltaPrice).toFixed(symbolInfo.pricePrecision || 1)),
+            stopLossPrice: Number((initRR.stopLossPrice + deltaPrice).toFixed(symbolInfo.pricePrecision || 1)),
+            takeProfitPrice: Number((initRR.takeProfitPrice + deltaPrice).toFixed(symbolInfo.pricePrecision || 1)),
+          };
+          updateDrawing(drawingId, { points: newPoints, riskReward: newRR });
+        } else {
+          updateDrawing(drawingId, { points: newPoints });
+        }
         return;
       }
     };
@@ -970,11 +1072,22 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
       return { x, y };
     }
 
-    if (selectedDrawing.type === 'horizontal' && selectedDrawing.points.length >= 1) {
-      const p = getCoordinates(selectedDrawing.points[0]);
-      if (p.y === null) return null;
-      const x = 120;
-      const y = p.y < 55 ? p.y + 14 : p.y - 50;
+    if ((selectedDrawing.type === 'position_long' || selectedDrawing.type === 'position_short') && selectedDrawing.points.length >= 2 && selectedDrawing.riskReward) {
+      const p1 = getCoordinates(selectedDrawing.points[0]);
+      const p2 = getCoordinates(selectedDrawing.points[1]);
+      const entryY = candleSeries?.priceToCoordinate(selectedDrawing.riskReward.entryPrice) ?? null;
+      const slY = candleSeries?.priceToCoordinate(selectedDrawing.riskReward.stopLossPrice) ?? null;
+      const tpY = candleSeries?.priceToCoordinate(selectedDrawing.riskReward.takeProfitPrice) ?? null;
+
+      if (p1.x === null || p2.x === null || entryY === null || slY === null || tpY === null) return null;
+
+      const minX = Math.min(p1.x, p2.x);
+      const maxX = Math.max(p1.x, p2.x);
+      const minY = Math.min(entryY, slY, tpY);
+      const maxY = Math.max(entryY, slY, tpY);
+
+      const x = Math.max(10, Math.min(minX + (maxX - minX) / 2 - 130, containerWidth - 340));
+      const y = minY < 55 ? maxY + 14 : minY - 50;
       return { x, y };
     }
 
@@ -1497,6 +1610,249 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
             );
           }
 
+          // POSITION TOOL (LONG & SHORT - TRADINGVIEW RISK/REWARD)
+          if ((drawing.type === 'position_long' || drawing.type === 'position_short') && drawing.points.length >= 2 && drawing.riskReward) {
+            const isLong = drawing.type === 'position_long';
+            const p1 = getCoordinates(drawing.points[0]);
+            const p2 = getCoordinates(drawing.points[1]);
+            if (!candleSeries) return null;
+            const entryY = candleSeries.priceToCoordinate(drawing.riskReward.entryPrice);
+            const slY = candleSeries.priceToCoordinate(drawing.riskReward.stopLossPrice);
+            const tpY = candleSeries.priceToCoordinate(drawing.riskReward.takeProfitPrice);
+
+            if (p1.x === null || p2.x === null || entryY === null || slY === null || tpY === null) {
+              return null;
+            }
+
+            const leftX = Math.min(p1.x, p2.x);
+            const rightX = Math.max(p1.x, p2.x);
+            const boxWidth = Math.max(70, rightX - leftX);
+            const centerX = leftX + boxWidth / 2;
+
+            // Geometry for Profit and Loss Boxes
+            const profitTop = Math.min(tpY, entryY);
+            const profitHeight = Math.max(2, Math.abs(tpY - entryY));
+
+            const lossTop = Math.min(slY, entryY);
+            const lossHeight = Math.max(2, Math.abs(slY - entryY));
+
+            // Metrics calculation
+            const entryP = drawing.riskReward.entryPrice;
+            const slP = drawing.riskReward.stopLossPrice;
+            const tpP = drawing.riskReward.takeProfitPrice;
+
+            const stopDist = Math.abs(entryP - slP);
+            const targetDist = Math.abs(tpP - entryP);
+            const rrRatio = stopDist > 0 ? (targetDist / stopDist).toFixed(2) : '0.00';
+
+            const stopPercent = entryP > 0 ? ((stopDist / entryP) * 100).toFixed(2) : '0.00';
+            const targetPercent = entryP > 0 ? ((targetDist / entryP) * 100).toFixed(2) : '0.00';
+
+            const estRiskUsd = (balance * (riskSettings.riskPercent / 100)).toFixed(1);
+            const estProfitUsd = (parseFloat(estRiskUsd) * parseFloat(rrRatio)).toFixed(1);
+
+            return (
+              <g key={drawing.id} className="tv-drawing-element select-none">
+                {/* Hit area when unselected */}
+                <rect
+                  x={leftX}
+                  y={Math.min(tpY, slY, entryY)}
+                  width={boxWidth}
+                  height={Math.max(4, Math.max(tpY, slY, entryY) - Math.min(tpY, slY, entryY))}
+                  fill="transparent"
+                  pointerEvents={isSelected ? 'none' : 'all'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedDrawingId(drawing.id);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedDrawingId(drawing.id);
+                    setModalDrawing(drawing);
+                    setIsSettingsModalOpen(true);
+                  }}
+                  className="cursor-pointer"
+                />
+
+                {/* 1. PROFIT BOX (Take Profit) */}
+                <rect
+                  x={leftX}
+                  y={profitTop}
+                  width={boxWidth}
+                  height={profitHeight}
+                  fill="rgba(8, 153, 129, 0.22)"
+                  stroke="#089981"
+                  strokeWidth="1"
+                  strokeDasharray="4 3"
+                  className="pointer-events-none"
+                />
+
+                {/* 2. LOSS BOX (Stop Loss) */}
+                <rect
+                  x={leftX}
+                  y={lossTop}
+                  width={boxWidth}
+                  height={lossHeight}
+                  fill="rgba(242, 54, 69, 0.22)"
+                  stroke="#f23645"
+                  strokeWidth="1"
+                  strokeDasharray="4 3"
+                  className="pointer-events-none"
+                />
+
+                {/* 3. ENTRY LINE (Middle) */}
+                <line
+                  x1={leftX}
+                  y1={entryY}
+                  x2={leftX + boxWidth}
+                  y2={entryY}
+                  stroke="#2962ff"
+                  strokeWidth="1.5"
+                  className="pointer-events-none"
+                />
+
+                {/* 4. METRIC LABELS INSIDE BOXES */}
+                {/* Target Label */}
+                <g transform={`translate(${leftX + 8}, ${profitTop + 14})`} className="pointer-events-none">
+                  <text fill="#089981" fontSize="10" fontWeight="bold" fontFamily="monospace">
+                    Цель: ${formatPrice(tpP, symbolInfo.precision)} (+{targetDist.toFixed(1)} / +{targetPercent}%)
+                  </text>
+                  <text y="12" fill="#089981" opacity="0.8" fontSize="9" fontFamily="monospace">
+                    +${estProfitUsd} (+{rrRatio}R)
+                  </text>
+                </g>
+
+                {/* Stop Label */}
+                <g transform={`translate(${leftX + 8}, ${lossTop + lossHeight - 16})`} className="pointer-events-none">
+                  <text fill="#f23645" fontSize="10" fontWeight="bold" fontFamily="monospace">
+                    Стоп: ${formatPrice(slP, symbolInfo.precision)} (-{stopDist.toFixed(1)} / -{stopPercent}%)
+                  </text>
+                  <text y="12" fill="#f23645" opacity="0.8" fontSize="9" fontFamily="monospace">
+                    -${estRiskUsd} (-{riskSettings.riskPercent}%)
+                  </text>
+                </g>
+
+                {/* Center Risk/Reward Badge & Trade Execution Button */}
+                <g transform={`translate(${centerX}, ${entryY})`} className="pointer-events-auto">
+                  <foreignObject
+                    x="-80"
+                    y="-13"
+                    width="160"
+                    height="28"
+                    className="overflow-visible pointer-events-auto"
+                  >
+                    <div className="flex items-center justify-center gap-1.5 px-2 py-0.5 bg-[#181b24]/95 hover:bg-[#181b24] border border-[#2a2e39] rounded-lg shadow-xl backdrop-blur-sm text-[10px] font-mono select-none">
+                      <span className="text-[#787b86]">R:R</span>
+                      <span className="font-bold text-white text-[11px]">{rrRatio}</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          executeTrade(isLong ? 'long' : 'short', slP, tpP);
+                        }}
+                        title={`Открыть сделку ${isLong ? 'LONG' : 'SHORT'} со стопом $${slP} и тейком $${tpP}`}
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase transition-transform active:scale-95 cursor-pointer ${
+                          isLong
+                            ? 'bg-[#089981] hover:bg-[#089981]/80 text-white'
+                            : 'bg-[#f23645] hover:bg-[#f23645]/80 text-white'
+                        }`}
+                      >
+                        ⚡ Сделка
+                      </button>
+                    </div>
+                  </foreignObject>
+                </g>
+
+                {/* Price Scale Badges on the right axis when selected */}
+                {isSelected && (
+                  <>
+                    <g transform={`translate(${containerRef.current?.clientWidth ? containerRef.current.clientWidth - 56 : 950}, ${slY - 9})`} className="pointer-events-none">
+                      <rect x="0" y="0" width="54" height="18" rx="3" fill="#f23645" />
+                      <text x="27" y="12" textAnchor="middle" fill="#ffffff" fontSize="9.5" fontWeight="bold" fontFamily="monospace">
+                        ${formatPrice(slP, symbolInfo.precision)}
+                      </text>
+                    </g>
+                    <g transform={`translate(${containerRef.current?.clientWidth ? containerRef.current.clientWidth - 56 : 950}, ${tpY - 9})`} className="pointer-events-none">
+                      <rect x="0" y="0" width="54" height="18" rx="3" fill="#089981" />
+                      <text x="27" y="12" textAnchor="middle" fill="#ffffff" fontSize="9.5" fontWeight="bold" fontFamily="monospace">
+                        ${formatPrice(tpP, symbolInfo.precision)}
+                      </text>
+                    </g>
+                    <g transform={`translate(${containerRef.current?.clientWidth ? containerRef.current.clientWidth - 56 : 950}, ${entryY - 9})`} className="pointer-events-none">
+                      <rect x="0" y="0" width="54" height="18" rx="3" fill="#2962ff" />
+                      <text x="27" y="12" textAnchor="middle" fill="#ffffff" fontSize="9.5" fontWeight="bold" fontFamily="monospace">
+                        ${formatPrice(entryP, symbolInfo.precision)}
+                      </text>
+                    </g>
+                  </>
+                )}
+
+                {/* 5. INTERACTIVE HANDLES WHEN SELECTED */}
+                {isSelected && !drawing.isLocked && (
+                  <>
+                    {/* Top Boundary Handle */}
+                    <g
+                      onMouseDown={(e) => handleStartDrag(e, drawing.id, isLong ? 'pos_target' : 'pos_stop')}
+                      className="tv-drawing-handle cursor-ns-resize pointer-events-auto"
+                    >
+                      <circle cx={centerX} cy={isLong ? tpY : slY} r="14" fill="transparent" />
+                      <circle
+                        cx={centerX}
+                        cy={isLong ? tpY : slY}
+                        r="5"
+                        fill="#ffffff"
+                        stroke={isLong ? '#089981' : '#f23645'}
+                        strokeWidth="2.5"
+                      />
+                    </g>
+
+                    {/* Bottom Boundary Handle */}
+                    <g
+                      onMouseDown={(e) => handleStartDrag(e, drawing.id, isLong ? 'pos_stop' : 'pos_target')}
+                      className="tv-drawing-handle cursor-ns-resize pointer-events-auto"
+                    >
+                      <circle cx={centerX} cy={isLong ? slY : tpY} r="14" fill="transparent" />
+                      <circle
+                        cx={centerX}
+                        cy={isLong ? slY : tpY}
+                        r="5"
+                        fill="#ffffff"
+                        stroke={isLong ? '#f23645' : '#089981'}
+                        strokeWidth="2.5"
+                      />
+                    </g>
+
+                    {/* Entry Line Handle */}
+                    <g
+                      onMouseDown={(e) => handleStartDrag(e, drawing.id, 'pos_entry')}
+                      className="tv-drawing-handle cursor-ns-resize pointer-events-auto"
+                    >
+                      <circle cx={leftX + 16} cy={entryY} r="12" fill="transparent" />
+                      <circle cx={leftX + 16} cy={entryY} r="4.5" fill="#ffffff" stroke="#2962ff" strokeWidth="2" />
+                    </g>
+
+                    {/* Left Width Resize Handle */}
+                    <g
+                      onMouseDown={(e) => handleStartDrag(e, drawing.id, 'pos_left')}
+                      className="tv-drawing-handle cursor-ew-resize pointer-events-auto"
+                    >
+                      <circle cx={leftX} cy={entryY} r="12" fill="transparent" />
+                      <circle cx={leftX} cy={entryY} r="4.5" fill="#ffffff" stroke="#787b86" strokeWidth="2" />
+                    </g>
+
+                    {/* Right Width Resize Handle */}
+                    <g
+                      onMouseDown={(e) => handleStartDrag(e, drawing.id, 'pos_right')}
+                      className="tv-drawing-handle cursor-ew-resize pointer-events-auto"
+                    >
+                      <circle cx={leftX + boxWidth} cy={entryY} r="12" fill="transparent" />
+                      <circle cx={leftX + boxWidth} cy={entryY} r="4.5" fill="#ffffff" stroke="#787b86" strokeWidth="2" />
+                    </g>
+                  </>
+                )}
+              </g>
+            );
+          }
+
           return null;
         })}
 
@@ -1832,6 +2188,24 @@ export const DrawingLayer: React.FC<DrawingLayerProps> = ({
               </div>
             )}
           </div>
+
+          {/* Quick Trade Execution from toolbar for Position Tools */}
+          {(selectedDrawing.type === 'position_long' || selectedDrawing.type === 'position_short') && selectedDrawing.riskReward && (
+            <button
+              onClick={() => {
+                const isLong = selectedDrawing.type === 'position_long';
+                executeTrade(
+                  isLong ? 'long' : 'short',
+                  selectedDrawing.riskReward!.stopLossPrice,
+                  selectedDrawing.riskReward!.takeProfitPrice
+                );
+              }}
+              title="Открыть сделку по текущим параметрам SL и TP"
+              className="px-2.5 py-1 bg-[#2962ff] hover:bg-[#2962ff]/80 text-white rounded-lg text-xs font-bold font-mono transition-transform active:scale-95 flex items-center gap-1 shadow-md cursor-pointer"
+            >
+              <span>⚡ Открыть сделку</span>
+            </button>
+          )}
 
           {/* Settings Button */}
           <button

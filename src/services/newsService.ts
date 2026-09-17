@@ -101,10 +101,21 @@ export function generateEconomicEvents(startTimestamp: number, endTimestamp: num
         }
       }
 
-      // 4. ECB Interest Rate (EUR)
+      // 4. ECB Interest Rate (EUR) - Always 3rd Thursday of meeting months @ 12:15 UTC
       if ([0, 2, 5, 8, 9, 11].includes(month)) {
-        const ecbDate = 12 + ((month * 5) % 8);
-        const ecbTime = Math.floor(Date.UTC(year, month, ecbDate, 12, 15, 0) / 1000);
+        let thirdThursday = 15;
+        let thursdayCount = 0;
+        for (let d = 1; d <= 28; d++) {
+          const testD = new Date(Date.UTC(year, month, d));
+          if (testD.getUTCDay() === 4) { // 4 = Thursday
+            thursdayCount++;
+            if (thursdayCount === 3) {
+              thirdThursday = d;
+              break;
+            }
+          }
+        }
+        const ecbTime = Math.floor(Date.UTC(year, month, thirdThursday, 12, 15, 0) / 1000);
         if (ecbTime >= startTimestamp && ecbTime <= endTimestamp) {
           let ecbRate = '3.75%';
           if (year <= 2021) ecbRate = '0.00%';
@@ -172,3 +183,48 @@ export function filterNewsEvents(
     return true;
   });
 }
+
+// In-memory cache for real historical economic events loaded from public/data/historical_news.json
+let historicalNewsCache: EconomicNewsEvent[] | null = null;
+let historicalNewsLoadingPromise: Promise<EconomicNewsEvent[]> | null = null;
+
+export async function loadRealHistoricalNews(): Promise<EconomicNewsEvent[]> {
+  if (historicalNewsCache) return historicalNewsCache;
+  if (historicalNewsLoadingPromise) return historicalNewsLoadingPromise;
+
+  historicalNewsLoadingPromise = (async () => {
+    try {
+      const res = await fetch('/data/historical_news.json');
+      if (!res.ok) throw new Error(`Status ${res.status}`);
+      const data: EconomicNewsEvent[] = await res.json();
+      historicalNewsCache = data;
+      return data;
+    } catch (err) {
+      console.warn('Could not load /data/historical_news.json, using procedural fallback:', err);
+      return [];
+    }
+  })();
+
+  return historicalNewsLoadingPromise;
+}
+
+export function getCachedHistoricalNews(): EconomicNewsEvent[] | null {
+  return historicalNewsCache;
+}
+
+/**
+ * Returns real historical news events if available in cache, otherwise falls back to procedural generation
+ */
+export function getEconomicEvents(startTimestamp: number, endTimestamp: number): EconomicNewsEvent[] {
+  if (historicalNewsCache && historicalNewsCache.length > 0) {
+    const inRange = historicalNewsCache.filter(
+      (ev) => ev.timestamp >= startTimestamp && ev.timestamp <= endTimestamp
+    );
+    if (inRange.length > 0) {
+      return inRange;
+    }
+  }
+
+  return generateEconomicEvents(startTimestamp, endTimestamp);
+}
+

@@ -1466,6 +1466,7 @@ export const TradingViewChart: React.FC = () => {
       <NewsLayer
         chart={chartInstance}
         chartWidth={containerRef.current?.clientWidth || 800}
+        containerRef={containerRef}
       />
     </div>
   );

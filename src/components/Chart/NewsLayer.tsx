@@ -1,14 +1,15 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { IChartApi } from 'lightweight-charts';
 import { useChart } from '../../context/ChartContext';
 import { EconomicNewsEvent } from '../../types/news';
-import { generateEconomicEvents, filterNewsEvents } from '../../services/newsService';
+import { getEconomicEvents, filterNewsEvents, loadRealHistoricalNews } from '../../services/newsService';
 import { formatDateTime } from '../../utils/formatters';
 import { Zap, X, AlertCircle } from 'lucide-react';
 
 interface NewsLayerProps {
   chart: IChartApi | null;
   chartWidth: number;
+  containerRef?: React.RefObject<HTMLDivElement>;
 }
 
 function getTimeframeSeconds(tf: string): number {
@@ -27,10 +28,88 @@ function getTimeframeSeconds(tf: string): number {
   }
 }
 
-export const NewsLayer: React.FC<NewsLayerProps> = ({ chart, chartWidth }) => {
+export const NewsLayer: React.FC<NewsLayerProps> = ({ chart, chartWidth, containerRef }) => {
   const { visibleCandles, newsFilter, timezone, symbolInfo, timeframe } = useChart();
   const [selectedEvent, setSelectedEvent] = useState<EconomicNewsEvent | null>(null);
   const [hoveredEvent, setHoveredEvent] = useState<EconomicNewsEvent | null>(null);
+  const [realNewsLoaded, setRealNewsLoaded] = useState(false);
+  const [tick, setTick] = useState(0);
+
+  // Load real historical economic events from public/data/historical_news.json
+  useEffect(() => {
+    let mounted = true;
+    loadRealHistoricalNews().then((data) => {
+      if (mounted && data.length > 0) {
+        setRealNewsLoaded(true);
+      }
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // 60 FPS sync during chart zoom/pan so news markers stay strictly tied to candles
+  useEffect(() => {
+    const container = containerRef?.current;
+    if (!container || !chart) return;
+
+    let rafId: number | null = null;
+    let wheelTimer: any = null;
+
+    const tickFrame = () => {
+      setTick((t) => (t + 1) % 1000000);
+      rafId = requestAnimationFrame(tickFrame);
+    };
+
+    const startActiveSync = () => {
+      if (rafId === null) {
+        rafId = requestAnimationFrame(tickFrame);
+      }
+    };
+
+    const stopActiveSync = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    };
+
+    const handleMouseDown = () => startActiveSync();
+    const handleMouseUp = () => {
+      stopActiveSync();
+      setTick((t) => (t + 1) % 1000000);
+    };
+    const handleWheel = () => {
+      startActiveSync();
+      if (wheelTimer) clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => {
+        stopActiveSync();
+        setTick((t) => (t + 1) % 1000000);
+      }, 250);
+    };
+
+    container.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mouseup', handleMouseUp);
+    container.addEventListener('wheel', handleWheel, { passive: true });
+
+    const handleTimeRangeChange = () => {
+      setTick((t) => (t + 1) % 1000000);
+    };
+    chart.timeScale().subscribeVisibleTimeRangeChange(handleTimeRangeChange);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleTimeRangeChange);
+
+    return () => {
+      stopActiveSync();
+      if (wheelTimer) clearTimeout(wheelTimer);
+      container.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mouseup', handleMouseUp);
+      container.removeEventListener('wheel', handleWheel);
+      try {
+        chart.timeScale().unsubscribeVisibleTimeRangeChange(handleTimeRangeChange);
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleTimeRangeChange);
+      } catch (e) {}
+    };
+  }, [chart, containerRef]);
 
   // Robust coordinate resolution for any timestamp across any timeframe
   const getEventCoordinate = useCallback(
@@ -39,13 +118,17 @@ export const NewsLayer: React.FC<NewsLayerProps> = ({ chart, chartWidth }) => {
 
       // 1. Direct match if exact candle exists
       const directX = chart.timeScale().timeToCoordinate(timestamp as any);
-      if (directX !== null) return Number(directX);
+      if (directX !== null) {
+        const numX = Number(directX);
+        if (numX >= -40 && numX <= chartWidth + 40) return numX;
+        return null;
+      }
 
       if (!visibleCandles || visibleCandles.length === 0) return null;
       const first = visibleCandles[0];
       const last = visibleCandles[visibleCandles.length - 1];
 
-      // 2. If within visible candle range: find bounding candles and interpolate
+      // 2. If within loaded candle range: find bounding candles and interpolate
       if (timestamp >= first.time && timestamp <= last.time) {
         let low = 0;
         let high = visibleCandles.length - 1;
@@ -67,11 +150,17 @@ export const NewsLayer: React.FC<NewsLayerProps> = ({ chart, chartWidth }) => {
 
         if (xLeft !== null && xRight !== null && cRight.time > cLeft.time) {
           const ratio = (timestamp - cLeft.time) / (cRight.time - cLeft.time);
-          return Number(xLeft) + (Number(xRight) - Number(xLeft)) * ratio;
+          const computedX = Number(xLeft) + (Number(xRight) - Number(xLeft)) * ratio;
+          if (computedX >= -40 && computedX <= chartWidth + 40) return computedX;
+          return null;
         } else if (xLeft !== null) {
-          return Number(xLeft);
+          const numX = Number(xLeft);
+          if (numX >= -40 && numX <= chartWidth + 40) return numX;
+          return null;
         } else if (xRight !== null) {
-          return Number(xRight);
+          const numX = Number(xRight);
+          if (numX >= -40 && numX <= chartWidth + 40) return numX;
+          return null;
         }
       } else if (timestamp > last.time) {
         // 3. Future timestamp: extrapolate forward
@@ -83,13 +172,15 @@ export const NewsLayer: React.FC<NewsLayerProps> = ({ chart, chartWidth }) => {
           if (xPrev !== null) {
             const barWidth = Number(xLast) - Number(xPrev);
             const barsAhead = (timestamp - last.time) / tfSec;
-            return Number(xLast) + barWidth * barsAhead;
+            const computedX = Number(xLast) + barWidth * barsAhead;
+            if (computedX >= -40 && computedX <= chartWidth + 40) return computedX;
+            return null;
           }
         }
       }
       return null;
     },
-    [chart, visibleCandles, timeframe]
+    [chart, visibleCandles, timeframe, chartWidth]
   );
 
   // Generate and filter news events within visible time range
@@ -99,8 +190,8 @@ export const NewsLayer: React.FC<NewsLayerProps> = ({ chart, chartWidth }) => {
     const firstTime = visibleCandles[0].time;
     const lastTime = visibleCandles[visibleCandles.length - 1].time;
 
-    // Pad range by 3 days before and after
-    const all = generateEconomicEvents(firstTime - 259200, lastTime + 259200);
+    // Load real historical events (or fallback)
+    const all = getEconomicEvents(firstTime - 86400, lastTime + 86400);
     const filtered = filterNewsEvents(all, newsFilter, symbolInfo.quoteAsset);
 
     return filtered
@@ -112,7 +203,7 @@ export const NewsLayer: React.FC<NewsLayerProps> = ({ chart, chartWidth }) => {
         };
       })
       .filter((item): item is { event: EconomicNewsEvent; x: number } => item.x !== null && item.x >= 0 && item.x <= chartWidth - 50);
-  }, [visibleCandles, newsFilter, symbolInfo, getEventCoordinate, chartWidth]);
+  }, [visibleCandles, newsFilter, symbolInfo, getEventCoordinate, chartWidth, tick, realNewsLoaded]);
 
   if (!newsFilter.enabled || visibleEvents.length === 0) {
     return null;
